@@ -1,0 +1,159 @@
+Let’s go deep into the OpenShift SDN Network Types and Modes, specifically the three modes:
+👉 Subnet
+👉 Multitenant
+👉 NetworkPolicy
+
+🧠 Background: OpenShift SDN
+OpenShiftSDN is the legacy Software Defined Networking plugin used before the adoption of OVN-Kubernetes.
+It builds a virtual overlay network (via VXLAN) that connects all pods across nodes, providing pod-level IPs and network isolation between projects.
+
+📦 Core components:
+Open vSwitch (OVS): Data plane that forwards packets.
+openshift-sdn (or ovs-subnet/ovs-multitenant) pods: Control plane agents running on each node.
+VXLAN tunnels: Provide pod-to-pod connectivity across nodes.
+The behavior of the SDN — especially isolation between namespaces — is defined by its mode.
+
+⚙️ 1️⃣ Subnet Mode
+🔹 Description
+Simplest mode — all pods in the cluster can talk to each other freely, with no isolation between namespaces.
+Used mainly in development or simple environments where you don’t need tenant separation.
+
+🔹 How It Works
+Every node gets a unique pod subnet (e.g., /23).
+The SDN just routes packets between these subnets using VXLAN tunnels.
+There are no network policies or project boundaries enforced.
+
+🔹 Communication Rules
+✅ Pod ↔ Pod (any namespace): Allowed
+✅ Pod ↔ Service: Allowed
+❌ No isolation or restrictions
+
+🔹 Example
+| Namespace | Pod CIDR      | Reachability        |
+| --------- | ------------- | ------------------- |
+| projectA  | 10.128.0.0/23 | ↔                   |
+| projectB  | 10.128.2.0/23 | ↔ (Fully reachable) |
+
+🔹 Use Case
+Lab setups
+Clusters where all applications trust each other
+Troubleshooting networks or debugging workloads
+
+🧩 2️⃣ Multitenant Mode
+🔹 Description
+Introduces network isolation between projects/namespaces.
+Each project (OpenShift namespace) becomes its own virtual network (like a tenant).
+Pods in the same namespace can talk to each other freely, but pods in different namespaces are blocked by default.
+
+🔹 How It Works
+The SDN assigns a unique VNID (Virtual Network ID) per project.
+OVS flow rules use these VNIDs to enforce traffic separation.
+VXLAN tunnels carry both pod IP and VNID tag across nodes.
+
+🔹 Communication Rules
+✅ Pod ↔ Pod (same project): Allowed
+❌ Pod ↔ Pod (different project): Blocked (unless allowed manually)
+✅ Pod ↔ Service (same project): Allowed
+
+🔹 Example
+| Namespace | VNID | Communication                  |
+| --------- | ---- | ------------------------------ |
+| projectA  | 100  | Can talk to projectA pods only |
+| projectB  | 200  | Can talk to projectB pods only |
+
+By default, cross-project traffic is denied.
+
+🔹 Admin Override
+Cluster admins can allow specific projects to communicate using:
+oc adm pod-network join-projects --to=projectA projectB
+Or isolate them again:
+oc adm pod-network isolate-projects projectB
+
+🔹 Use Case
+Multi-tenant environments (e.g., shared OpenShift clusters).
+When you want strict namespace-level isolation without configuring complex NetworkPolicies.
+Secure environments (finance, defense, multi-team clusters).
+
+🧱 3️⃣ NetworkPolicy Mode
+🔹 Description
+The most flexible and modern mode.
+Instead of static per-project isolation, it uses Kubernetes NetworkPolicy API for fine-grained, dynamic traffic control.
+
+🔹 How It Works
+Initially, all pods can communicate (like subnet mode).
+You define NetworkPolicy YAMLs to control traffic at pod-level granularity — by namespace, label, or port.
+
+🔹 Example NetworkPolicy
+Deny all traffic, then allow only from pods with label app=frontend:
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-frontend
+  namespace: backend
+spec:
+  podSelector: {}   # applies to all backend pods
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: frontend
+
+🔹 Communication Rules
+✅ Pod ↔ Pod: Controlled via NetworkPolicies
+✅ Pod ↔ Service: Allowed unless restricted by policy
+✅ Pod ↔ External: Configurable by egress rules
+
+🔹 Use Case
+Security-focused clusters.
+Compliance or microsegmentation requirements.
+Developers who want to control traffic per app or label, not just per namespace.
+🧭 Summary Table
+| Mode              | Isolation                 | Configurable                 | Default Policy             | Use Case                               |
+| ----------------- | ------------------------- | ---------------------------- | -------------------------- | -------------------------------------- |
+| **Subnet**        | None                      | ❌                            | Allow all                  | Simple clusters, Dev/Test              |
+| **Multitenant**   | Namespace-level (Project) | ✅ (per-project join/isolate) | Deny cross-namespace       | Multi-tenant setups                    |
+| **NetworkPolicy** | Pod-level                 | ✅ (via YAML policies)        | Allow all until restricted | Enterprise-grade, fine-grained control |
+
+🔍 Check Current SDN Mode
+oc get network.operator cluster -o jsonpath='{.spec.defaultNetwork.type}{"\n"}'
+If it shows:
+OpenShiftSDN → Legacy plugin
+OVNKubernetes → New default plugin
+Then, for OpenShiftSDN:
+oc get clusternetwork default -o yaml | grep pluginName
+Output Example:
+pluginName: redhat/openshift-ovs-multitenant
+Or:
+redhat/openshift-ovs-subnet
+redhat/openshift-ovs-networkpolicy
+
+🧩 Migration Path
+As of OpenShift 4.12+:
+OpenShiftSDN is being replaced by OVN-Kubernetes, which only supports NetworkPolicy-style isolation (no more multitenant/subnet modes).
+This gives consistent behavior across hybrid and cloud deployments.
+
+📊 Visual Summary
+[ Subnet Mode ]
+  ┌──────────┐      ┌──────────┐
+  │ ProjectA │ <--> │ ProjectB │   (All connected)
+  └──────────┘      └──────────┘
+
+[ Multitenant Mode ]
+  ┌──────────┐      ┌──────────┐
+  │ ProjectA │ X    │ ProjectB │   (Isolated by VNID)
+  └──────────┘      └──────────┘
+
+[ NetworkPolicy Mode ]
+  ┌──────────┐      ┌──────────┐
+  │ Frontend │ ---> │ Backend  │   (Allowed via Policy)
+  └──────────┘      └──────────┘
+💡 Key Takeaways
+| Feature               | Subnet        | Multitenant          | NetworkPolicy                  |
+| --------------------- | ------------- | -------------------- | ------------------------------ |
+| **Isolation Level**   | None          | Namespace-based      | Pod/Label-based                |
+| **Default Behavior**  | Allow all     | Deny cross-namespace | Allow all (until restricted)   |
+| **Control Mechanism** | None          | VNID isolation       | Kubernetes NetworkPolicy       |
+| **Admin Control**     | None          | oc adm pod-network   | YAML manifest                  |
+| **Best for**          | Simple setups | Secure multi-tenant  | Fine-grained microsegmentation |
+

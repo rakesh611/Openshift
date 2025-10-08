@@ -1,0 +1,174 @@
+🧩 OVN-Kubernetes in OpenShift
+
+🚀 1. What is OVN-Kubernetes?
+OVN (Open Virtual Network) is an open-source SDN (Software Defined Networking) system built on top of Open vSwitch (OVS).
+It provides virtual network abstractions — logical switches, routers, and ACLs — that are realized by OVS flows on each node.
+When integrated into Kubernetes/OpenShift, it forms the OVN-Kubernetes CNI plugin, which handles all cluster networking functions:
+Pod networking (Cluster Network)
+Service networking
+NetworkPolicies (security rules)
+External routing
+
+🧠 2. How OVN-Kubernetes Replaces OpenShift SDN
+| Feature             | **OpenShift SDN (Legacy)**                   | **OVN-Kubernetes (Default in OCP 4.x)**        |
+| ------------------- | -------------------------------------------- | ---------------------------------------------- |
+| **Architecture**    | Custom SDN using VXLAN tunnels and iptables  | Based on OVS + OVN with logical topology       |
+| **Encapsulation**   | VXLAN                                        | Geneve                                         |
+| **NetworkPolicy**   | Implemented via iptables rules               | Implemented via OVN ACLs (faster and scalable) |
+| **Performance**     | Software overlay (less efficient)            | Hardware offload possible, more scalable       |
+| **Multi-tenancy**   | SDN modes (subnet/multitenant/networkpolicy) | Unified via NetworkPolicies only               |
+| **Central Control** | SDN master/controller pods                   | OVN central (northbound/southbound DBs)        |
+| **Scalability**     | 100s of nodes                                | 1000s of nodes                                 |
+| **Default Since**   | OCP 3.x                                      | OCP 4.x onwards                                |
+
+So, OVN-Kubernetes = Next generation SDN, standardized on Open vSwitch (OVS) and OVN databases.
+
+🏗️ 3. OVN Architecture in OpenShift
+OVN introduces a centralized control plane that translates Kubernetes/CRD objects (Pods, Services, NetworkPolicies) into logical network topology entries.
+🔹 OVN Components Overview
+                 ┌──────────────────────────────────────┐
+                 │              Master Node             │
+                 │ (OVN North/South DBs, ovn-northd)    │
+                 └──────────────────────────────────────┘
+                           ▲                ▲
+                           │                │
+             OVN Northbound DB       OVN Southbound DB
+                           │                │
+                           ▼                ▼
+     ┌───────────────────────────────────────────────────────────────┐
+     │                      Worker Nodes (each)                      │
+     │  ovs-vswitchd + ovn-controller + OVS kernel datapath          │
+     └───────────────────────────────────────────────────────────────┘
+
+🧩 Core Components
+| Component                           | Location      | Function                                                                                                  |
+| ----------------------------------- | ------------- | --------------------------------------------------------------------------------------------------------- |
+| **OVN Northbound DB (`ovnnb_db`)**  | Control Plane | Stores *logical* topology: switches, routers, ACLs, etc. Created by ovn-northd based on Kubernetes state. |
+| **OVN Southbound DB (`ovnsb_db`)**  | Control Plane | Stores *physical mapping*: which logical ports belong to which hypervisors/nodes.                         |
+| **`ovn-northd` daemon**             | Master Node   | Translates northbound DB objects into southbound DB flows.                                                |
+| **`ovn-controller`**                | Worker Node   | Syncs with southbound DB and installs OpenFlow rules into local OVS (`ovs-vswitchd`).                     |
+| **`ovs-vswitchd` + `ovsdb-server`** | Worker Node   | Actual dataplane responsible for packet switching via kernel datapath.                                    |
+
+🧭 4. Logical Network Concepts in OVN
+OVN models a virtual L2/L3 topology across all nodes using logical entities.
+Let’s break down each:
+
+🧩 a) Logical Switch
+Represents a Layer 2 broadcast domain (like a VLAN or bridge).
+Each Pod connects to a logical switch port.
+Every node hosts local ports for its pods.
+Traffic between pods on different nodes is tunneled via Geneve encapsulation.
++-----------------------------+
+| Logical Switch: namespaceA  |
+|  - pod1 (port)              |
+|  - pod2 (port)              |
+|  - router-port              |
++-----------------------------+
+
+🧩 b) Logical Router
+Provides Layer 3 routing between logical switches (i.e., between namespaces or nodes).
+Each node has a gateway router port connecting the node’s logical switch to the cluster router.
+Handles NAT and SNAT for pod egress to external network.
+Cluster Logical Router
+ ├── connects to each node’s logical switch
+ ├── routes pod traffic between namespaces
+ └── performs SNAT for external traffic
+
+🧩 c) Logical Router Port (LRP) & Logical Switch Port (LSP)
+LSP connects a Pod (veth interface) to the logical switch.
+LRP connects logical switches to the router for inter-node and inter-namespace communication.
+
+🧩 d) ACLs (Access Control Lists)
+Used to implement NetworkPolicies.
+Define allow/deny rules at the logical switch level.
+Faster and more scalable than iptables rules used in OpenShift SDN.
+
+🧩 e) Geneve Tunnels
+Replaces VXLAN (used in OpenShiftSDN).
+Encapsulates packets between nodes.
+Contains metadata headers allowing more flexible flow processing.
+
+🔄 5. Packet Flow Example in OVN-Kubernetes
+Pod-to-Pod on same node
+Pod A → Logical Switch (via veth)
+Logical Switch → Pod B (same switch)
+Packets stay local — handled by OVS bridge, no tunneling.
+Pod-to-Pod across nodes
+Pod A (Node1) sends to Pod B (Node2)
+OVS on Node1 looks up destination Pod’s LSP → finds remote chassis (Node2)
+Packet encapsulated in Geneve → sent over Host Network
+Node2’s OVS decapsulates → delivers to Pod B via veth.
+
+Pod-to-External
+Pod traffic → Logical Router → Node’s Gateway Router
+NAT applied (Pod IP → Node IP)
+Sent out via physical interface (eth0) on Node.
+
+🧠 6. How Kubernetes Objects Map to OVN Objects
+| **Kubernetes Object** | **OVN Equivalent**  | **Purpose**               |
+| --------------------- | ------------------- | ------------------------- |
+| Namespace             | Logical Switch      | L2 broadcast domain       |
+| Pod                   | Logical Port (LSP)  | Endpoint interface        |
+| Service               | Load-balancer entry | Virtual IP → backend pods |
+| NetworkPolicy         | ACL                 | Allow/Deny rules          |
+| Node                  | Gateway Router      | L3 routing + SNAT/DNAT    |
+| Cluster Network       | Logical topology    | Overall connectivity      |
+
+🔧 7. How to View OVN Configuration (in OCP)
+View Northbound Database
+oc exec -n openshift-ovn-kubernetes ovnkube-master-<pod> -- ovn-nbctl show
+View Southbound Database
+oc exec -n openshift-ovn-kubernetes ovnkube-master-<pod> -- ovn-sbctl show
+View Local OVS Bridges
+oc exec -n openshift-ovn-kubernetes ovnkube-node-<pod> -- ovs-vsctl show
+
+🧩 8. Benefits of OVN-Kubernetes
+✅ Unified Network Model – No need for multiple SDN modes (subnet/multitenant).
+✅ Better Performance – Geneve + kernel datapath acceleration.
+✅ Hardware Offload Support – For NICs with OVS offload.
+✅ Scalable NetworkPolicy – Implemented in OVN DB (not iptables).
+✅ Faster Service Routing – Handled via distributed load-balancing.
+✅ Built-in IPv6, Dual-stack support.
+
+📊 9. Summary Comparison: SDN vs OVN-Kubernetes
+| Feature             | OpenShift SDN  | OVN-Kubernetes              |
+| ------------------- | -------------- | --------------------------- |
+| Encapsulation       | VXLAN          | Geneve                      |
+| Control Plane       | SDN Controller | OVN North/South DB          |
+| Routing             | Centralized    | Distributed logical routers |
+| NetworkPolicy       | iptables       | OVN ACLs                    |
+| Scalability         | Limited        | Very high                   |
+| Default in          | OCP 3.x        | OCP 4.x                     |
+| NAT & LoadBalancing | iptables       | OVN native                  |
+| Performance         | Moderate       | High                        |
+
+🧭 10. Visual Overview Diagram
+                    ┌──────────────────────────────┐
+                    │     Kubernetes Master        │
+                    │   (ovn-northd, DB servers)   │
+                    ├──────────────────────────────┤
+                    │  OVN Northbound DB           │
+                    │  OVN Southbound DB           │
+                    └────────────┬─────────────────┘
+                                 │
+                   ┌─────────────┴────────────────┐
+                   │                              │
+           ┌──────────────┐              ┌──────────────┐
+           │  Node 1      │              │   Node 2     │
+           │ ovn-controller│             │ ovn-controller│
+           │ ovs-vswitchd  │             │ ovs-vswitchd  │
+           │  Pods, veths  │             │  Pods, veths  │
+           └──────────────┘              └──────────────┘
+                  │ Geneve Tunnel (Overlay Network) │
+                  └─────────────────────────────────┘
+✅ In Short
+| Concept              | Description                                    |
+| -------------------- | ---------------------------------------------- |
+| **OVN-Kubernetes**   | Modern SDN for OpenShift using OVS + OVN DBs   |
+| **Replaces**         | OpenShiftSDN (VXLAN-based)                     |
+| **Key Components**   | ovn-northd, ovn-controller, ovs-vswitchd       |
+| **DB Layers**        | Northbound (logical), Southbound (physical)    |
+| **Logical Entities** | Switch, Router, Ports, ACLs                    |
+| **Encapsulation**    | Geneve                                         |
+| **Implements**       | Pod-to-Pod, Pod-to-Service, NetworkPolicy, NAT |
+
