@@ -1,0 +1,154 @@
+🌐 Egress Traffic in OpenShift
+Egress traffic refers to all outbound traffic from Pods to external networks (outside the OpenShift cluster, like the Internet or other enterprise networks).
+Managing egress is critical for:
+Security (restrict which Pods can reach external services)
+IP control (use stable IPs for external endpoints)
+Compliance (auditable external connections)
+
+1️⃣ Egress IPs
+
+What are Egress IPs?
+Egress IP is an IP address assigned to a project/namespace for outbound traffic.
+Pods in that namespace, when accessing external networks, will appear to come from the Egress IP, instead of node IPs.
+Useful for firewall rules, whitelisting, or external API access.
+
+Key Points:
+Assigned per namespace/project.
+OpenShift ensures high availability: if a node with the Egress IP fails, traffic is routed via another node.
+Implemented in OVN-Kubernetes via SNAT rules.
+
+Example:
+oc get egressip
+NAME      NAMESPACE     EGRESSIP
+my-egress myproject    203.0.113.10
+All Pods in myproject using Egress IP 203.0.113.10 for external traffic.
+
+2️⃣ EgressFirewall CRDs
+
+What is EgressFirewall?
+OpenShift provides the EgressFirewall Custom Resource Definition (CRD) to control namespace-level outbound traffic.
+Allows allow/deny rules for external CIDRs.
+Works only for OVN-Kubernetes clusters.
+
+Example EgressFirewall YAML:
+apiVersion: network.openshift.io/v1
+kind: EgressFirewall
+metadata:
+  name: allow-google
+  namespace: myproject
+spec:
+  egress:
+  - type: Allow
+    to:
+      cidrSelector: 8.8.8.8/32
+  - type: Deny
+    to:
+      cidrSelector: 0.0.0.0/0
+Explanation:
+First rule allows traffic to 8.8.8.8
+Second rule denies all other external traffic (0.0.0.0/0)
+EgressFirewall rules are processed in order, first match applies.
+
+3️⃣ Controlling External Network Access from Pods
+
+Methods:
+EgressFirewall – per-project allow/deny rules
+NetworkPolicies – restrict Pod-to-Pod traffic, can also restrict egress to external IPs if egress is specified
+Egress IPs – ensure Pods use known IPs for external access
+
+Example: Only allow Pods in finance namespace to access 10.1.2.0/24 network externally:
+
+apiVersion: network.openshift.io/v1
+kind: EgressFirewall
+metadata:
+  name: finance-external
+  namespace: finance
+spec:
+  egress:
+  - type: Allow
+    to:
+      cidrSelector: 10.1.2.0/24
+  - type: Deny
+    to:
+      cidrSelector: 0.0.0.0/0
+
+4️⃣ SNAT (Source NAT) and Masquerading
+
+What is SNAT?
+Source NAT (SNAT) replaces the source IP of a packet with another IP (usually a node IP or Egress IP).
+Needed because external networks cannot route back to Pod IPs, which are typically in private cluster subnets (10.x.x.x or 172.x.x.x).
+Masquerading:
+Masquerading is a form of SNAT where Pods’ source IP is masqueraded as node IP.
+Implemented via iptables or OVN logical flows.
+
+Example packet flow:
+Pod IP: 10.128.2.14 → wants to access 8.8.8.8
+OVN applies SNAT / Masquerade → source IP becomes 203.0.113.10 (Egress IP)
+Packet goes to Internet
+Response returns to 203.0.113.10
+OVN rewrites destination back to Pod IP 10.128.2.14
+
+Key Points:
+Pods’ internal IPs are never exposed externally.
+Required for connectivity to Internet or external APIs.
+Works with Egress IP or node IP masquerading.
+
+5️⃣ How OVN-Kubernetes Handles Egress
+OVN adds logical flows for Egress traffic:
+Pod sends packet → OVN
+OVN checks if EgressFirewall rules allow traffic
+OVN applies SNAT / Egress IP if configured
+Packet exits cluster to external network
+Return traffic is DNAT-ed back to Pod
+
+6️⃣ Summary Table
+| Concept         | Purpose                                 | OpenShift Implementation            |
+| --------------- | --------------------------------------- | ----------------------------------- |
+| Egress IP       | Stable external IP for Pods             | SNAT via OVN, per-namespace         |
+| EgressFirewall  | Control outbound access                 | CRD per namespace, allow/deny rules |
+| SNAT            | Rewrite source IP for external routing  | OVN logical flows                   |
+| Masquerading    | Node IP or Egress IP used as Pod source | OVN logical flows / iptables        |
+| External access | Allow Pods to reach Internet / APIs     | EgressFirewall + SNAT               |
+
+7️⃣ Example Scenario
+
+Namespace: dev
+Pods: multiple in dev
+Requirements:
+Allow access to 8.8.8.8 and 1.1.1.1
+Deny all other external networks
+Use stable Egress IP 203.0.113.10
+
+Steps:
+
+Assign Egress IP:
+oc patch namespace dev -p '{"metadata":{"annotations":{"k8s.ovn.org/egress-assignable":"true"}}}'
+oc get nodes
+oc create egressip dev-egress --namespace=dev --egressip=203.0.113.10
+
+Create EgressFirewall:
+
+apiVersion: network.openshift.io/v1
+kind: EgressFirewall
+metadata:
+  name: dev-egress
+  namespace: dev
+spec:
+  egress:
+  - type: Allow
+    to:
+      cidrSelector: 8.8.8.8/32
+  - type: Allow
+    to:
+      cidrSelector: 1.1.1.1/32
+  - type: Deny
+    to:
+      cidrSelector: 0.0.0.0/0
+Pods now use 203.0.113.10 for outbound traffic and are restricted to allowed external IPs.
+
+✅ Key Takeaways
+Egress IPs provide stable external IPs for Pods.
+EgressFirewall CRD controls which external networks Pods can access.
+SNAT / Masquerading allows Pods with private IPs to communicate externally.
+OVN-Kubernetes implements all logical flows for security, high availability, and correct routing.
+Combining Egress IP + EgressFirewall gives both control and traceability for outbound traffic.

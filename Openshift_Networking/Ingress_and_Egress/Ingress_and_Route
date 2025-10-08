@@ -1,0 +1,165 @@
+🌐 Ingress and Route in OpenShift
+
+1️⃣ Ingress Controller in OpenShift
+OpenShift uses HAProxy-based Ingress Controllers to handle external traffic to cluster services.
+It’s deployed as Pods in openshift-ingress namespace.
+Responsible for:
+Terminating TLS/SSL (if configured)
+Routing HTTP/HTTPS requests to Services via ClusterIP
+Load balancing across backend Pods
+Default Ingress Controller:
+Namespace: openshift-ingress
+Name: default (or openshift-ingress)
+Provides a cluster-wide entry point to expose Routes.
+
+Command to view:
+oc get ingresscontroller -n openshift-ingress-operator
+
+2️⃣ Route vs Ingress in OpenShift
+| Feature          | OpenShift Route                            | Kubernetes Ingress                                 |
+| ---------------- | ------------------------------------------ | -------------------------------------------------- |
+| Purpose          | Expose services externally in OpenShift    | Expose services externally in Kubernetes           |
+| Controller       | HAProxy-based OpenShift Ingress Controller | Ingress Controller (NGINX, HAProxy, Traefik, etc.) |
+| TLS              | Built-in support                           | Depends on Ingress Controller                      |
+| Wildcard domains | ✅ Supported                                | ❌ Limited                                          |
+| Rewriting paths  | ✅ Supported                                | ✅ Depends on controller                            |
+| OpenShift-native | ✅                                          | Optional                                           |
+OpenShift prefers Routes over standard Kubernetes Ingress; Ingress is supported but Routes are more fully featured in OCP.
+
+3️⃣ Route Types in OpenShift
+OpenShift supports three TLS route types:
+
+a) Edge Termination
+TLS is terminated at the Ingress Controller (HAProxy).
+Communication Ingress → Service is HTTP (unencrypted).
+
+Use case: When internal network is trusted.
+spec:
+  to:
+    kind: Service
+    name: myapp
+  tls:
+    termination: edge
+
+b) Passthrough Termination
+TLS is not terminated at HAProxy.
+Encrypted traffic is sent directly to the backend Pod.
+
+Use case: Backend handles TLS termination.
+spec:
+  tls:
+    termination: passthrough
+Only TCP 443 is supported. HTTP routing features (like path-based routing) are not available.
+
+c) Re-encrypt Termination
+TLS is terminated at HAProxy, then re-encrypted and sent to backend.
+Requires a server certificate on the backend Service.
+
+Use case: Secure end-to-end TLS inside the cluster.
+spec:
+  tls:
+    termination: reencrypt
+    destinationCACertificate: <CA cert for backend>
+
+4️⃣ Wildcard and Secured Routes
+
+🔹 Wildcard Routes
+Allow multiple subdomains to point to the same route.
+
+Example:
+spec:
+  host: '*.apps.example.com'
+
+Useful for multi-tenant applications or dynamic subdomains.
+
+🔹 Secured Routes
+Use TLS certificates for HTTPS.
+
+Can use:
+Default OpenShift wildcard certificate
+Custom certificates (Secret in OpenShift)
+
+5️⃣ Route Sharding
+Multiple Ingress Controllers can exist for a cluster.
+Each Route can be assigned to a specific Ingress Controller using ingress.class.
+
+Useful for:
+Multi-tenant clusters
+Different network zones
+High availability
+
+Example:
+spec:
+  ingress:
+    class: custom-ingress
+Allows segmentation of routes across different HAProxy instances.
+
+6️⃣ Custom Certificates
+OpenShift supports custom TLS certificates for Routes.
+
+Steps:
+Create a Secret containing tls.crt and tls.key:
+oc create secret tls myapp-tls --cert=cert.crt --key=cert.key -n mynamespace
+Reference the Secret in the Route:
+spec:
+  tls:
+    termination: edge
+    certificate: |
+      <contents of cert.crt>
+    key: |
+      <contents of cert.key>
+For Re-encrypt, also include destinationCACertificate for backend verification.
+
+7️⃣ Flow of External Traffic
+
+Edge Termination:
+Client HTTPS
+   │
+   ▼
+HAProxy Ingress (Edge TLS termination)
+   │ (HTTP)
+   ▼
+Service (ClusterIP)
+   │
+OVN-Kubernetes
+   ▼
+Backend Pods
+
+Passthrough Termination:
+Client HTTPS
+   │
+   ▼
+HAProxy Ingress (TCP passthrough)
+   │ (Encrypted)
+   ▼
+Backend Pod TLS
+
+Re-encrypt Termination:
+Client HTTPS
+   │
+   ▼
+HAProxy Ingress (TLS termination)
+   │ (Re-encrypted)
+   ▼
+Backend Pod TLS
+
+8️⃣ Summary Table: Route Types
+| Route Type  | TLS Termination | Backend Encryption | Use Case                                      |
+| ----------- | --------------- | ------------------ | --------------------------------------------- |
+| Edge        | At Ingress      | HTTP               | Simple HTTPS, internal network trusted        |
+| Passthrough | None at Ingress | TLS                | Backend handles TLS                           |
+| Re-encrypt  | At Ingress      | TLS                | End-to-end encrypted, secure internal traffic |
+
+9️⃣ Key Takeaways
+Ingress Controller in OpenShift is HAProxy-based, deployed in openshift-ingress.
+Routes are OpenShift-native objects for exposing Services externally.
+
+Route types:
+Edge: TLS ends at HAProxy
+
+Passthrough: TLS goes directly to Pod
+
+Re-encrypt: TLS ends at HAProxy, then re-encrypted to Pod
+Wildcard routes allow dynamic subdomains.
+Route sharding supports multiple Ingress Controllers.
+Custom certificates can be used for secure, production-grade HTTPS.
