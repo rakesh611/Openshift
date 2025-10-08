@@ -1,0 +1,99 @@
+🌐 DNS Resolution in OpenShift Services
+
+🧠 1️⃣ What is svc.cluster.local?
+Every Service in OpenShift is assigned a ClusterIP.
+Each Service also gets a DNS name automatically in the form:
+<service>.<namespace>.svc.cluster.local
+Example:
+Service name: myapp
+Namespace: default
+ClusterIP: 172.30.55.12
+
+DNS name: myapp.default.svc.cluster.local
+Pods inside the cluster can use either:
+ClusterIP (172.30.55.12) directly, or
+DNS name (myapp.default.svc.cluster.local)
+OpenShift automatically resolves these DNS names to ClusterIP via CoreDNS.
+
+🏗️ 2️⃣ CoreDNS in OpenShift
+OpenShift uses CoreDNS (or kube-dns in older versions) as the cluster DNS server.
+CoreDNS runs as a Pod in the openshift-dns namespace.
+
+Responsibilities:
+Resolve <service>.<namespace>.svc.cluster.local → ClusterIP
+Forward other DNS queries to upstream DNS (e.g., Google DNS, ISP DNS)
+Pods use the DNS via /etc/resolv.conf inside each Pod:
+search default.svc.cluster.local svc.cluster.local cluster.local
+nameserver <CoreDNS ClusterIP>
+
+🧩 3️⃣ DNS Resolution Flow (Pod → Service)
+Step-by-step
+
+Pod A wants to connect to Service myapp:
+curl http://myapp.default.svc.cluster.local:8080
+
+Pod’s resolver sends query to CoreDNS (10.96.0.10 usually).
+Query: myapp.default.svc.cluster.local
+
+CoreDNS responds with the ClusterIP of the Service:
+172.30.55.12
+Pod uses ClusterIP → packet sent to kube-proxy (legacy) or OVN logical load balancer → backend Pod(s).
+
+🔹 Internal vs External DNS
+| DNS Type         | Example                                 | Resolved by              |
+| ---------------- | --------------------------------------- | ------------------------ |
+| **Service DNS**  | myapp.default.svc.cluster.local         | CoreDNS inside cluster   |
+| **Pod DNS**      | <podname>.<namespace>.pod.cluster.local | CoreDNS                  |
+| **External DNS** | google.com                              | Upstream DNS via CoreDNS |
+
+4️⃣ DNS Namespaces in OpenShift
+Full FQDN: <service>.<namespace>.svc.cluster.local
+
+Shorter forms (within the same namespace):
+myapp             # resolved via default search domain
+myapp.default     # adds namespace
+myapp.default.svc # adds svc
+
+OpenShift automatically appends search domains in /etc/resolv.conf:
+search default.svc.cluster.local svc.cluster.local cluster.local
+
+So Pods in the default namespace can just use:
+curl http://myapp:8080
+
+5️⃣ DNS Resolution and Services Types
+| Service Type     | DNS Behavior                                               |
+| ---------------- | ---------------------------------------------------------- |
+| **ClusterIP**    | DNS resolves to ClusterIP                                  |
+| **NodePort**     | DNS resolves to ClusterIP (NodePort handled at node layer) |
+| **LoadBalancer** | DNS resolves to ClusterIP (external LB IP is optional)     |
+| **ExternalName** | DNS resolves to externalName via **CNAME** in CoreDNS      |
+Note: ExternalName services bypass the ClusterIP entirely; CoreDNS returns the external CNAME.
+
+🧩 6️⃣ OVN-Kubernetes Role
+CoreDNS only resolves DNS names → ClusterIP
+OVN-Kubernetes handles ClusterIP → Pod backend mapping
+Pods only see stable Service IPs; underlying Pod IPs can change.
+
+Flow:
+Pod → DNS lookup (CoreDNS) → ClusterIP → OVN load balancer → Backend Pod
+
+🔧 7️⃣ Commands to Inspect DNS Resolution
+
+View service and ClusterIP:
+oc get svc myapp
+
+Test DNS from a Pod:
+oc run -i --tty dns-test --image=busybox --restart=Never -- sh
+nslookup myapp
+nslookup myapp.default.svc.cluster.local
+ping myapp
+
+Check CoreDNS ConfigMap:
+oc get configmap coredns -n openshift-dns -o yaml
+
+🔑 8️⃣ Key Takeaways
+svc.cluster.local is the default internal domain for Services.
+CoreDNS resolves Service names to stable ClusterIPs.
+Pods can use short names or FQDN depending on namespace.
+DNS + Service abstraction ensures stable communication, even if Pods are rescheduled or replaced.
+Works for ClusterIP, NodePort, LoadBalancer, while ExternalName uses CNAME.

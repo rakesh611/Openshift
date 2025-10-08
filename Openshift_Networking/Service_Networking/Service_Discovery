@@ -1,0 +1,92 @@
+🌐 Service Discovery in OpenShift
+OpenShift provides two primary ways for Pods to discover Services:
+Environment Variables (older method)
+DNS-based discovery via CoreDNS (modern, preferred)
+
+🧠 1️⃣ Service Discovery via Environment Variables
+How It Works:
+When a Pod is created in OpenShift, the kubelet automatically injects environment variables for all Services in the same namespace.
+Variables include:
+<SERVICE_NAME>_SERVICE_HOST → Service ClusterIP
+<SERVICE_NAME>_SERVICE_PORT → Service port
+
+Example:
+Service definition:
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: myapp
+spec:
+  ports:
+  - port: 8080
+    targetPort: 8080
+
+Pod environment variables will include:
+MYAPP_SERVICE_HOST=172.30.55.12
+MYAPP_SERVICE_PORT=8080
+
+Limitations:
+| Limitation                 | Explanation                                                             |
+| -------------------------- | ----------------------------------------------------------------------- |
+| Only in **same namespace** | Env vars are only injected for Services in Pod’s namespace              |
+| Static snapshot            | Env vars do **not update** if the Service IP changes after Pod creation |
+| Less flexible              | Harder to scale across namespaces                                       |
+Environment variables are mostly legacy; CoreDNS is preferred in modern OpenShift.
+
+🏗️ 2️⃣ Service Discovery via CoreDNS
+How It Works:
+CoreDNS runs as a Pod in the cluster (usually openshift-dns namespace).
+It maintains DNS records for all Services:
+<service>.<namespace>.svc.cluster.local → ClusterIP
+
+Example:
+Pod connects to Service:
+curl http://myapp.default.svc.cluster.local:8080
+CoreDNS resolves myapp.default.svc.cluster.local → 172.30.55.12 (ClusterIP)
+
+OVN-Kubernetes or kube-proxy forwards the packet to a backend Pod.
+
+🔹 DNS Search Domains
+Pods can also use short names because OpenShift sets search domains in /etc/resolv.conf:
+search default.svc.cluster.local svc.cluster.local cluster.local
+nameserver 10.96.0.10
+So inside the default namespace, Pods can simply do:
+curl http://myapp:8080
+DNS resolves automatically to myapp.default.svc.cluster.local.
+
+🧩 3️⃣ Environment Variables vs CoreDNS
+| Feature                | Env Variables              | CoreDNS                                 |
+| ---------------------- | -------------------------- | --------------------------------------- |
+| Dynamic updates        | ❌ (static at Pod creation) | ✅ (automatic update if Service changes) |
+| Cross-namespace access | ❌                          | ✅                                       |
+| Scalability            | Limited                    | Highly scalable                         |
+| Preferred              | Legacy                     | Modern and recommended                  |
+Modern OpenShift relies mostly on DNS; environment variables are mainly for backward compatibility.
+
+🏗️ 4️⃣ OVN-Kubernetes Interaction
+CoreDNS resolves Service FQDN → ClusterIP
+OVN-Kubernetes handles ClusterIP → backend Pod routing
+Result: Pod-to-Pod communication is stable even if Pods are recreated or rescheduled.
+
+Flow Diagram:
+Pod → DNS query → CoreDNS → ClusterIP → OVN logical LB → Backend Pod
+
+🔧 5️⃣ Commands to Inspect Service Discovery
+
+Check environment variables in a Pod:
+oc run testpod --image=busybox --restart=Never -i --tty -- sh
+env | grep SERVICE
+
+Test DNS resolution:
+nslookup myapp
+nslookup myapp.default.svc.cluster.local
+
+View CoreDNS ConfigMap:
+oc get configmap coredns -n openshift-dns -o yaml
+
+🔑 6️⃣ Key Takeaways
+Environment variables: legacy method, namespace-scoped, static at Pod creation.
+CoreDNS: modern method, dynamic, namespace-aware, supports full FQDN.
+Pods use ClusterIP or DNS name; OVN-Kubernetes or kube-proxy forwards traffic to Pods.
+DNS-based discovery is the standard in OpenShift 4.x, environment variables are mostly backward compatible.

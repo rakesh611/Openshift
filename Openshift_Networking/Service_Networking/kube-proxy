@@ -1,0 +1,86 @@
+🌐 kube-proxy in OpenShift
+
+🧠 1️⃣ What is kube-proxy?
+kube-proxy is a Kubernetes component responsible for implementing Services networking.
+Its main job:
+Forward traffic from Service IP (ClusterIP) to backend Pods
+Load balance traffic across multiple Pod endpoints
+Works at Layer 3/Layer 4 (IP/TCP/UDP) level.
+In legacy OpenShift (pre-OVN), kube-proxy handled Service traffic via iptables or IPVS rules.
+
+🏗️ 2️⃣ kube-proxy Modes
+kube-proxy can operate in two main modes:
+| Mode                         | Description                                                          | Pros                                                                       | Cons                                                                             |
+| ---------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| **iptables**                 | Uses **iptables rules** to redirect traffic from Service IP → Pod IP | Simple, no extra kernel modules                                            | Can be slow with large number of Services/Endpoints; every packet hits conntrack |
+| **IPVS (IP Virtual Server)** | Uses **IPVS kernel module** for load balancing                       | High performance, scalable, better metrics, built-in scheduling algorithms | Requires IPVS kernel modules; more complex setup                                 |
+
+
+🔹 iptables Mode Flow
+kube-proxy watches the API server for Services and Endpoints.
+It programs iptables rules on each node:
+iptables -t nat -A KUBE-SERVICES -d <ServiceIP>/32 ...
+iptables -t nat -A KUBE-SEP -s <PodIP>/32 ...
+Packets destined to ClusterIP are NAT-ed to one of the backend Pod IPs.
+
+Characteristics:
+Load balancing is random or round-robin via iptables rules.
+Works well for small to medium clusters.
+High rule count can impact performance.
+
+🔹 IPVS Mode Flow
+Uses IPVS kernel module, which is a virtual server inside Linux kernel.
+Maps Service IP → backend Pods in a hash table.
+Features:
+Supports multiple load-balancing algorithms: Round-robin, Least connections, Source hashing, etc.
+Better performance for large clusters (thousands of Services/Pods).
+Avoids iptables conntrack overhead.
+
+Command to see IPVS rules:
+ipvsadm -L -n
+Example output:
+TCP  172.30.55.12:8080 rr
+  -> 10.128.2.14:8080
+  -> 10.128.3.19:8080
+172.30.55.12:8080 → service ClusterIP
+Pods backend listed below
+
+🧩 3️⃣ How kube-proxy Works with OpenShift Services
+Pod → Service → Pod communication:
+Pod A → ClusterIP (Service) → kube-proxy (iptables/IPVS) → Pod B
+Traffic flow is Node-local if Pod is on same node, otherwise routed via overlay network.
+
+⚡ 4️⃣ OVN-Kubernetes vs kube-proxy
+In OpenShift 4.x:
+| Feature                | kube-proxy                                          | OVN-Kubernetes                     |
+| ---------------------- | --------------------------------------------------- | ---------------------------------- |
+| Service implementation | iptables/IPVS                                       | Distributed logical load balancer  |
+| Traffic interception   | Node-local NAT (iptables/IPVS)                      | OVN OVS flows, L3 routing          |
+| Scaling                | Moderate (iptables may degrade with many endpoints) | High (distributed LB across nodes) |
+| ClusterIP              | Stable IP                                           | Stable IP                          |
+| NodePort               | Implemented by kube-proxy                           | OVN LB handles NodePort flow       |
+
+Key takeaway:
+OVN-Kubernetes replaces kube-proxy for Service networking in OCP 4.x. It provides better scalability, performance, and distributed flow handling without relying on iptables or IPVS.
+
+🔧 5️⃣ Commands to Inspect kube-proxy
+Check kube-proxy mode on a node:
+kubectl get configmap kube-proxy -n kube-system -o yaml
+Look for:
+mode: "iptables"   # or "ipvs"
+List iptables rules:
+sudo iptables -t nat -L -n -v
+List IPVS rules:
+sudo ipvsadm -L -n
+
+📊 6️⃣ When to Use Each Mode
+| Mode     | Use Case                                                                           |
+| -------- | ---------------------------------------------------------------------------------- |
+| iptables | Small-medium clusters; simple setup; no kernel module dependency                   |
+| IPVS     | Large clusters with thousands of Services/Pods; better performance and scalability |
+
+🔑 7️⃣ Summary
+kube-proxy: implements ClusterIP, NodePort, LoadBalancer Services.
+iptables mode: simple NAT-based redirection, less scalable.
+IPVS mode: kernel-based LB, scalable, multiple algorithms.
+OpenShift 4.x (OVN-Kubernetes) replaces kube-proxy with distributed logical load balancer, improving performance and reducing dependency on iptables/IPVS.
