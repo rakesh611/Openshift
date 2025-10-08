@@ -1,0 +1,184 @@
+🧠 Networking Fundamentals in OpenShift
+OpenShift is built on top of Kubernetes, so it uses Kubernetes networking concepts but adds enhanced features, security, and automation.
+Networking in OpenShift covers three layers:
+| Layer                          | Purpose                                        | Example                                         |
+| ------------------------------ | ---------------------------------------------- | ----------------------------------------------- |
+| **Pod Networking**             | Communication between pods (east-west traffic) | Pods talk to each other across nodes            |
+| **Service Networking**         | Stable virtual IP for groups of pods           | ClusterIP, NodePort, LoadBalancer               |
+| **Ingress / Route Networking** | External access (north-south traffic)          | `Route` in OpenShift or `Ingress` in Kubernetes |
+
+⚙️ Kubernetes Networking Model (Standard)
+Kubernetes follows a simple but strict model:
+All Pods can communicate with all other Pods without NAT.
+All nodes can communicate with all Pods without NAT.
+Pod IPs are routable and unique within the cluster.
+Services provide stable DNS and IP for accessing Pods.
+To implement this, Kubernetes relies on CNI (Container Network Interface) plugins — examples:
+Flannel
+Calico
+Weave Net
+Cilium
+Each provides a different way of routing or encapsulating traffic.
+
+🧩 OpenShift SDN (Software Defined Networking)
+OpenShift used its own CNI-based SDN plugin before moving toward the new OVN-Kubernetes model.
+There are two main network plugins in OpenShift 4.x+:
+| Plugin             | Description                                                               |
+| ------------------ | ------------------------------------------------------------------------- |
+| **OpenShift SDN**  | Legacy, simpler SDN with project-based network isolation                  |
+| **OVN-Kubernetes** | Modern, default plugin in OpenShift 4.12+ (based on Open Virtual Network) |
+
+🔶 OpenShift SDN Architecture
+Uses Open vSwitch (OVS) as the data plane.
+Provides project (namespace) isolation and NetworkPolicy enforcement.
+Supports three network isolation modes:
+| Mode                | Description                                                                                                 |
+| ------------------- | ----------------------------------------------------------------------------------------------------------- |
+| **`subnet`**        | All pods share one flat network (no isolation).                                                             |
+| **`multitenant`**   | Each namespace/project has its own isolated network; pods in different projects cannot talk unless allowed. |
+| **`networkpolicy`** | Uses Kubernetes `NetworkPolicy` objects for fine-grained control (recommended).                             |
+
+Key Features
+Overlay network via VXLAN tunnels between nodes.
+Integrated with OpenShift’s RBAC and project isolation.
+Simpler setup and good for small to medium clusters.
+Limitations
+Limited scalability (VXLAN overhead).
+Slower performance at scale.
+Harder to integrate with external networks (firewalls, routers, etc.).
+
+🔷 OVN-Kubernetes (Next Generation SDN)
+OVN = Open Virtual Network, built on top of OVS (Open vSwitch) but more feature-rich.
+Key Features
+Native support for Kubernetes NetworkPolicy (no special modes).
+Better scalability and performance (uses Geneve instead of VXLAN).
+Built-in egress IPs, gateway routing, and IPAM (IP Address Management).
+Dual-stack support (IPv4/IPv6).
+Easier integration with bare metal, VM, or hybrid cloud networks.
+Centralized control plane (northbound/southbound databases).
+
+Benefits
+No need for multiple SDN modes.
+Faster pod-to-pod networking.
+Easier troubleshooting with OVN tools (ovn-nbctl, ovn-sbctl).
+Enterprise-grade — now default from OpenShift 4.12 onward.
+
+🥊 Comparison: OpenShift SDN vs Kubernetes Networking
+| Feature                  | Kubernetes (Generic CNI)                  | OpenShift SDN                   | OVN-Kubernetes                      |
+| ------------------------ | ----------------------------------------- | ------------------------------- | ----------------------------------- |
+| **Implementation**       | Depends on plugin (Flannel, Calico, etc.) | OpenShift-built (OVS)           | OpenShift default (OVN + OVS)       |
+| **Encapsulation**        | Varies (VXLAN, IPIP, etc.)                | VXLAN                           | Geneve                              |
+| **Isolation**            | Basic (via NetworkPolicy)                 | Namespace-based + NetworkPolicy | NetworkPolicy only                  |
+| **Scalability**          | Depends on CNI                            | Moderate                        | High                                |
+| **Performance**          | Medium                                    | Medium                          | High                                |
+| **IPv6 / Dual-stack**    | Depends on CNI                            | No                              | Yes                                 |
+| **Egress IP**            | Optional                                  | Supported                       | Supported (more flexible)           |
+| **Default in OCP**       | —                                         | Before 4.11                     | 4.12+                               |
+| **External Integration** | Limited                                   | Limited                         | Strong (supports hybrid networking) |
+
+🔍 Example (Check which network plugin is running)
+oc get network.operator cluster -o jsonpath='{.spec.defaultNetwork.type}{"\n"}'
+Output examples:
+OpenShiftSDN → Legacy plugin
+OVNKubernetes → New default plugin
+
+🧱 1️⃣ Container-to-Container Communication (Inside a Pod)
+🔹 Concept
+A Pod can have one or more containers.
+All containers in the same pod:
+Share the same network namespace
+Share the same IP address and port space
+Communicate via localhost (127.0.0.1)
+
+🔹 Example
+Suppose a pod has:
+Container A (app) listening on port 8080
+Container B (sidecar) wants to connect to it
+
+Then container B can simply do:
+curl http://localhost:8080
+✅ No networking plugin involved, no overlay, no NAT — communication happens internally within the Linux network namespace.
+Very fast and secure.
+
+🌐 2️⃣ Pod-to-Pod Communication (Across Same or Different Nodes)
+🔹 Concept
+Each Pod in OpenShift (and Kubernetes) gets its own unique IP address from the cluster’s Pod network (CIDR).
+Every node has a range of Pod IPs assigned.
+Pods on the same node communicate directly.
+Pods on different nodes communicate through the SDN overlay network.
+
+🔹 How It Works in OpenShift
+a. Same Node Communication
+If two pods are on the same node, packets are delivered directly via the Open vSwitch (OVS) bridge (br0 or br-int).
+No encapsulation needed.
+
+b. Different Node Communication
+The OpenShift SDN (or OVN-Kubernetes) creates an overlay network between all cluster nodes.
+Packets are encapsulated (VXLAN or Geneve) and tunneled to the destination node.
+The remote node’s OVS decapsulates and forwards to the target pod.
+
+🔹 Example
+Let’s say:
+Pod A (10.128.0.10) on Node1
+Pod B (10.129.0.20) on Node2
+When Pod A pings Pod B:
+Traffic enters the OVS bridge on Node1.
+Encapsulated using VXLAN (OpenShiftSDN) or Geneve (OVN-Kubernetes).
+Sent over the node network to Node2.
+Decapsulated and delivered to Pod B.
+
+🔹 Verification Commands
+Check pod IPs:
+oc get pods -o wide
+Test connectivity:
+oc exec <pod-A> -- ping <pod-B-IP>
+You can also check the OVS flow tables:
+sudo ovs-ofctl dump-flows br0
+
+🚀 3️⃣ Pod-to-Service Communication
+🔹 Concept
+A Service provides a stable virtual IP (ClusterIP) that acts as a front end for one or more pods (the back end).
+When a client pod connects to a service IP, the traffic is transparently load-balanced to one of the backend pods.
+🔹 How It Works Internally
+Step 1: Service Creation
+When you create a service:
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: myapp
+spec:
+  selector:
+    app: myapp
+  ports:
+    - port: 80
+      targetPort: 8080
+
+Kubernetes assigns a ClusterIP (e.g., 172.30.45.10) and creates iptables/OVN flows on all nodes to intercept traffic to that IP.
+Step 2: Pod Connection
+When a Pod runs:
+curl http://myapp:80
+or
+curl http://172.30.45.10
+
+The traffic hits the node’s kernel.
+Kube-proxy (or OVN controller) matches the destination IP.
+It selects one backend Pod IP (using round-robin or random) and forwards traffic to it.
+
+Step 3: Return Path
+The response from the backend Pod is sent directly to the client pod via the same overlay route.
+SNAT/DNAT rules ensure the return packet matches the correct session.
+
+🔁 4️⃣ Pod-to-External (North-South) Communication
+When a pod needs to talk to the outside world (internet, external service):
+Outbound packets are SNATed to the node’s IP (via OVS/iptables or OVN rules).
+For incoming external traffic, OpenShift uses:
+Ingress (Kubernetes standard)
+or Route (OpenShift-specific)
+
+OpenShift Route example:
+oc expose service myapp
+This creates a Route and exposes the service at:
+http://myapp.apps.cluster.example.com
+The Router (HAProxy pod) in the openshift-ingress namespace handles this and sends traffic to the appropriate service.
+
