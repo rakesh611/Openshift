@@ -1,0 +1,109 @@
+🔹 1. How DNS Works in OpenShift
+OpenShift uses CoreDNS (managed by the DNS Operator) to resolve names.
+Pods query DNS via their /etc/resolv.conf, which points to the cluster DNS service (typically 172.30.0.10).
+DNS is used for:
+Cluster services (*.svc.cluster.local)
+External domains (forwarded to upstream servers like 8.8.8.8)
+
+🔹 2. DNS Caching in OpenShift
+Where Caching Happens
+CoreDNS Cache (inside DNS pods)
+Default caching plugin is cache, usually caching for 30 seconds (cache 30).
+Reduces latency and load on upstream DNS.
+Node-level caching
+Nodes may have local caching (via nscd or systemd-resolved).
+Pods themselves can cache DNS results depending on the runtime/library.
+
+Application-level caching
+Some applications (Java, Go, Python) cache DNS results internally.
+TTL from CoreDNS affects application-level caching.
+
+CoreDNS Cache Example
+.:53 {
+    errors
+    health
+    kubernetes cluster.local in-addr.arpa ip6.arpa {
+        pods insecure
+        fallthrough in-addr.arpa ip6.arpa
+    }
+    forward . 8.8.8.8 1.1.1.1
+    cache 30
+    loop
+    reload
+    loadbalance
+}
+cache 30 → DNS results are cached for 30 seconds in CoreDNS.
+Reduces query load on upstream servers.
+
+🔹 3. Common DNS Issues in OpenShift
+| Issue                           | Possible Cause                                                                     |
+| ------------------------------- | ---------------------------------------------------------------------------------- |
+| Pod cannot resolve service name | CoreDNS pods down, NetworkPolicy blocking UDP/53, misconfigured `/etc/resolv.conf` |
+| External DNS queries fail       | Upstream DNS unreachable, firewall blocking port 53, `forwardPlugin` misconfigured |
+| Intermittent service resolution | CoreDNS cache stale, kube-proxy issues, pod IP changes                             |
+| Slow DNS resolution             | Heavy query load, long upstream response time, caching disabled                    |
+
+🔹 4. DNS Troubleshooting Commands
+4.1 Check DNS Operator / CoreDNS pods
+# Operator status
+oc get clusteroperators dns
+
+# DNS Operator pod logs
+oc logs -n openshift-dns-operator <dns-operator-pod>
+
+# CoreDNS pods
+oc get pods -n openshift-dns
+oc logs -n openshift-dns <coredns-pod-name>
+
+4.2 Test DNS from a Pod
+# Access pod shell
+oc rsh <pod-name>
+
+# Test cluster DNS (A record)
+nslookup kubernetes.default
+nslookup backend.payments.svc.cluster.local
+
+# Test SRV record
+dig +short SRV _http._tcp.backend.payments.svc.cluster.local
+
+4.3 Check /etc/resolv.conf inside pod
+cat /etc/resolv.conf
+Should point to cluster DNS (172.30.0.10) and have correct search entries.
+
+4.4 Test connectivity to DNS port
+# UDP test to CoreDNS
+nc -u -zv 172.30.0.10 53
+
+🔹 5. Clearing DNS Cache
+CoreDNS cache: restart CoreDNS pod to clear cache
+oc delete pod -n openshift-dns <coredns-pod-name>
+Application-level caching: depends on language; sometimes requires app restart.
+Node-level cache: restart systemd-resolved or nscd if enabled.
+
+🔹 6. Best Practices
+Run multiple CoreDNS pods (HA) to avoid single point of failure.
+Avoid NetworkPolicy blocking UDP/53 for pods needing DNS.
+Keep caching reasonable:
+Too low → extra load on DNS / upstream
+Too high → stale records, issues when pod IPs change
+Use dig +trace or nslookup for debugging hierarchical DNS.
+Check cluster operators: CoreDNS is managed by DNS operator; misconfigurations may revert if manually edited.
+
+🔹 7. DNS Caching Flow in OpenShift
+[Pod] → queries → [CoreDNS Pod] → forwards → [Upstream DNS]
+- CoreDNS caches A/SRV responses (cache 30s)
+- Node may cache DNS
+- Application may cache DNS
+
+🔹 8. Summary Table
+| Layer         | Caching                 | TTL / Notes                           |
+| ------------- | ----------------------- | ------------------------------------- |
+| **CoreDNS**   | Cache plugin            | Configurable (`cache 30`)             |
+| **Node**      | nscd / systemd-resolved | Optional                              |
+| **Pod / App** | Library-level           | Depends on language, may override TTL |
+
+💡 Key Takeaways:
+CoreDNS caching improves performance but can cause stale resolution if pod IPs change rapidly.
+Always troubleshoot DNS using nslookup, dig, pod logs, and CoreDNS logs.
+NetworkPolicy can block DNS traffic — always allow UDP 53 for cluster DNS.
+For persistent DNS issues, check DNS Operator, CoreDNS pods, and ConfigMap settings.

@@ -1,0 +1,126 @@
+🔹 1. What Is CoreDNS in OpenShift?
+OpenShift uses CoreDNS as the default DNS service for all pods.
+Managed by the OpenShift DNS Operator.
+Resolves:
+Cluster internal names: *.svc.cluster.local
+External DNS: forwarded to upstream resolvers
+CoreDNS runs as a DaemonSet in the openshift-dns namespace.
+
+🔹 2. Why Customize CoreDNS?
+You might customize CoreDNS for:
+| Use Case                                 | Example                               |
+| ---------------------------------------- | ------------------------------------- |
+| Forward internal domains to specific DNS | Forward `corp.internal` to `10.0.0.2` |
+| Block unwanted domains                   | Block `facebook.com` inside cluster   |
+| Configure caching / TTL                  | Improve DNS performance               |
+| Logging / debugging                      | Enable query logs for troubleshooting |
+
+🔹 3. How CoreDNS Is Configured in OpenShift
+The DNS Operator manages a Custom Resource (CR) called dns-default.
+CoreDNS configuration is stored in a ConfigMap called dns-default in the openshift-dns namespace.
+Any changes to the CR are automatically applied to CoreDNS pods.
+
+Example of ConfigMap:
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dns-default
+  namespace: openshift-dns
+data:
+  Corefile: |
+    .:53 {
+        errors
+        health
+        kubernetes cluster.local in-addr.arpa ip6.arpa {
+          pods insecure
+          fallthrough in-addr.arpa ip6.arpa
+        }
+        forward . 8.8.8.8 8.8.4.4
+        cache 30
+        loop
+        reload
+        loadbalance
+    }
+
+🔹 4. CoreDNS Plugins in OpenShift
+CoreDNS supports plugins. Commonly used in OpenShift:
+| Plugin       | Purpose                                  |
+| ------------ | ---------------------------------------- |
+| `kubernetes` | Resolves cluster services and pods       |
+| `forward`    | Forwards queries to upstream DNS servers |
+| `cache`      | Caches responses to improve performance  |
+| `loop`       | Detects forwarding loops                 |
+| `errors`     | Logs errors in queries                   |
+| `log`        | Enables query logging                    |
+You can add or modify plugins through the DNS CR or by editing the CoreDNS ConfigMap.
+
+🔹 5. CoreDNS Customization via DNS CR
+The recommended way in OpenShift is not to edit CoreDNS pods directly — instead, you modify the DNS Custom Resource (CR).
+Example: Forward a specific domain
+
+apiVersion: operator.openshift.io/v1
+kind: DNS
+metadata:
+  name: default
+  namespace: openshift-dns
+spec:
+  servers:
+  - name: custom-forward
+    zones:
+    - corp.internal
+    forwardPlugin:
+      upstreams:
+      - 10.0.0.2
+      - 10.0.0.3
+Effect:
+Queries for *.corp.internal go to 10.0.0.2 or 10.0.0.3.
+All other queries still use default cluster CoreDNS rules.
+
+Example: Add logging
+
+apiVersion: operator.openshift.io/v1
+kind: DNS
+metadata:
+  name: default
+  namespace: openshift-dns
+spec:
+  logging:
+    verbosity: 2
+Effect: CoreDNS will log queries for troubleshooting.
+
+🔹 6. Steps to Apply Customization
+
+Check current DNS CR:
+oc get dns -n openshift-dns default -o yaml
+Modify the DNS CR with your custom zones, upstreams, or logging.
+
+Apply the updated CR:
+oc apply -f dns-custom.yaml
+
+Verify CoreDNS pods reload configuration:
+oc get pods -n openshift-dns
+oc logs <coredns-pod>
+The operator automatically reconciles the changes to CoreDNS pods.
+
+🔹 7. Best Practices
+Do not edit CoreDNS pods directly — changes will be overwritten by the DNS operator.
+Always use DNS CR for customizations.
+For internal private zones, use forwardPlugin with specific IPs.
+Keep caching and TTL settings tuned for your cluster size.
+
+Test DNS queries from a pod:
+oc rsh <pod-name>
+nslookup service.namespace.svc.cluster.local
+nslookup google.com
+nslookup corp.internal
+
+🔹 8. Summary Table
+| Aspect     | Default                    | Customization                          |
+| ---------- | -------------------------- | -------------------------------------- |
+| Management | DNS Operator               | DNS Custom Resource                    |
+| Config     | ConfigMap (auto-generated) | CR `spec.servers`                      |
+| Forwarding | Upstream (default 8.8.8.8) | Forward specific zones to internal DNS |
+| Logging    | Minimal                    | Increase via CR `logging`              |
+| Plugins    | kubernetes, forward, cache | Add or configure plugins via CR        |
+
