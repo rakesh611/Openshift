@@ -1,0 +1,137 @@
+🔹 1. What Is an Ingress Controller?
+An Ingress Controller manages external access to services in the cluster.
+It uses Ingress resources (Kubernetes) or Routes (OpenShift) to expose HTTP/S traffic.
+It handles:
+Load balancing across pods
+SSL/TLS termination
+URL/path-based routing
+Health checks and failover
+In OpenShift, HAProxy is the default implementation for the Ingress Controller.
+
+🔹 2. HAProxy in OpenShift
+OpenShift ships with openshift-ingress operator, which manages HAProxy-based ingress pods.
+Key points:
+Runs in the namespace: openshift-ingress
+Deploys IngressController resources for default and custom ingress
+Handles TLS termination, load balancing, and route routing
+HAProxy features leveraged:
+Layer 7 (HTTP/HTTPS) routing
+Load balancing across multiple endpoints
+Sticky sessions if configured
+High performance & reliability
+
+🔹 3. Default IngressController
+OpenShift creates a default IngressController called default managed by the Ingress Operator.
+Key characteristics:
+Deploys 2 HAProxy pods per node pool by default (configurable)
+Uses hostNetwork for direct node IP access
+Integrates with OpenShift SDN / OVN-Kubernetes for pod routing
+Routes are automatically assigned wildcard certificates via the cluster default certificate
+
+Check default IngressController:
+oc get ingresscontroller -n openshift-ingress-operator
+Example output:
+NAME      DOMAIN                        NAMESPACE          ENDPOINTS
+default   apps.cluster.example.com      openshift-ingress  2
+
+🔹 4. HAProxy Routing Workflow
+External request → Node IP or LoadBalancer IP
+HAProxy ingress pod receives request
+Checks Route resources (OpenShift specific)
+Maps host/path to the corresponding Service
+Forwards traffic to the Service ClusterIP
+Service routes traffic to the pod endpoints
+Diagram of Traffic Flow:
+[External Client]
+      |
+      v
+[LoadBalancer IP / NodePort]
+      |
+      v
+[HAProxy Ingress Pod]
+      |
+      v
+[OpenShift Service (ClusterIP)]
+      |
+      v
+[Pods running application]
+
+🔹 5. Route vs Ingress
+OpenShift prefers Routes over native Kubernetes Ingress:
+| Aspect     | Route                                                 | Ingress              |
+| ---------- | ----------------------------------------------------- | -------------------- |
+| Resource   | `Route`                                               | `Ingress`            |
+| Managed by | HAProxy Ingress                                       | Ingress Controller   |
+| TLS        | Termination supported (edge, passthrough, re-encrypt) | TLS via ingress spec |
+| Wildcard   | Supported                                             | Limited              |
+The IngressController reads Routes and configures HAProxy dynamically.
+
+🔹 6. HAProxy Features Used in OpenShift
+| Feature                 | Purpose                                        |
+| ----------------------- | ---------------------------------------------- |
+| Host/path-based routing | Map multiple routes to different services      |
+| TLS termination         | SSL offloading at HAProxy level                |
+| Load balancing          | Round-robin by default, configurable           |
+| Health checks           | Monitors pod readiness, removes unhealthy pods |
+| Sticky sessions         | Optional session persistence using cookies     |
+
+🔹 7. HAProxy Pod Configuration
+HAProxy pods are managed by the Operator:
+hostNetwork: true → binds to node IP
+Runs as non-privileged but needs SCC privileged for hostNetwork
+Configs are generated dynamically from Route resources
+You can customize IngressController:
+Number of replicas
+Resource limits
+Node placement (nodeSelector / tolerations)
+Logging, affinity, or sticky sessions
+
+🔹 8. High Availability
+Default setup ensures HA:
+At least 2 pods per node pool
+Failover automatically handled by SDN
+Can scale replicas for higher throughput
+HAProxy uses internal routing table for real-time pod endpoints.
+
+🔹 9. Example: Create a Route
+
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: myapp
+  namespace: demo
+spec:
+  host: myapp-demo.apps.cluster.example.com
+  to:
+    kind: Service
+    name: myapp-service
+  tls:
+    termination: edge
+HAProxy ingress will automatically:
+Terminate TLS at edge
+Forward traffic to myapp-service
+Balance across all healthy pods
+
+🔹 10. Troubleshooting HAProxy Ingress
+| Issue                     | Check                                        |
+| ------------------------- | -------------------------------------------- |
+| Route not reachable       | `oc get route` and `oc describe route`       |
+| HAProxy pod down          | `oc get pods -n openshift-ingress`           |
+| Traffic not reaching pods | Check `oc get endpoints <service>`           |
+| TLS certificate issues    | Check Route TLS configuration and secret     |
+| Logs                      | `oc logs <haproxy-pod> -n openshift-ingress` |
+
+🔹 11. Summary
+| Component                                 | Role                                                        |
+| ----------------------------------------- | ----------------------------------------------------------- |
+| **HAProxy Ingress Pod**                   | Receives external requests, routes traffic to services/pods |
+| **IngressController (openshift-ingress)** | Operator-managed HAProxy deployment                         |
+| **Route**                                 | Maps host/path to service; TLS termination handled here     |
+| **LoadBalancer / NodePort**               | External traffic entry point for HAProxy                    |
+| **Cluster SDN**                           | Handles routing traffic to pod endpoints                    |
+
+💡 Key Takeaways:
+OpenShift uses HAProxy as the default ingress controller.
+It integrates tightly with Routes for HTTP/S traffic.
+Managed by the Ingress Operator for HA, scaling, and dynamic configuration.
+Supports TLS termination, load balancing, and high availability.

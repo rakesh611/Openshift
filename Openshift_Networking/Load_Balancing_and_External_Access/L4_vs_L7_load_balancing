@@ -1,0 +1,127 @@
+🔹 1. Overview of L4 and L7
+| Layer  | OSI Layer                      | What is Balanced                                                | Example in OpenShift                         |
+| ------ | ------------------------------ | --------------------------------------------------------------- | -------------------------------------------- |
+| **L4** | Transport Layer (TCP/UDP)      | Balances traffic based on **IP + Port**                         | NodePort, LoadBalancer service               |
+| **L7** | Application Layer (HTTP/HTTPS) | Balances traffic based on **HTTP headers, host, path, cookies** | HAProxy Ingress Controller, OpenShift Routes |
+Key difference: L4 is transport-level, L7 is application-level.
+
+🔹 2. Layer 4 (L4) Load Balancing
+How It Works:
+Distributes traffic using TCP/UDP 5-tuple: source IP, source port, destination IP, destination port, protocol.
+Does not inspect HTTP content.
+Usually implemented using kube-proxy / SDN, NodePort, or external cloud LB at L4.
+OpenShift Example:
+
+Service type LoadBalancer or NodePort:
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: myapp-l4
+spec:
+  selector:
+    app: myapp
+  type: LoadBalancer
+  ports:
+    - port: 80
+      targetPort: 8080
+
+Traffic flow:
+
+[Client IP:Port]
+      |
+      v
+[LoadBalancer IP / NodePort]
+      |
+      v
+[Service ClusterIP]
+      |
+      v
+[Pod: myapp]
+Features:
+Fast, lightweight
+Works for all TCP/UDP traffic, not just HTTP
+No content inspection → cannot do path-based routing, SSL termination at L4 is limited
+
+🔹 3. Layer 7 (L7) Load Balancing
+How It Works:
+Operates at HTTP/HTTPS layer.
+Can inspect:
+Host headers → example.com
+URL paths → /api, /static
+Cookies / session info → sticky sessions
+Routes traffic to different services based on rules.
+
+OpenShift Example:
+Route using HAProxy Ingress:
+
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: myapp-l7
+spec:
+  host: myapp.apps.cluster.local
+  to:
+    kind: Service
+    name: myapp
+  tls:
+    termination: edge
+
+Traffic flow:
+
+[Client: HTTPS]
+      |
+      v
+[HAProxy Ingress Pod]  <-- L7 inspection
+      |  host/path routing
+      v
+[Service ClusterIP]
+      |
+      v
+[Pods: myapp]
+Features:
+Supports TLS termination at ingress
+Path-based routing: /api → service A, /static → service B
+Host-based routing: app1.example.com → service A
+Sticky sessions for session persistence
+
+🔹 4. Comparison Table
+| Feature         | L4 Load Balancing                  | L7 Load Balancing                     |
+| --------------- | ---------------------------------- | ------------------------------------- |
+| Layer           | Transport (TCP/UDP)                | Application (HTTP/HTTPS)              |
+| Criteria        | IP + port                          | HTTP headers, paths, cookies          |
+| TLS Termination | Not handled (pass-through)         | Yes, at ingress                       |
+| Routing         | Port-based only                    | Path-based, host-based, content-based |
+| Service Types   | NodePort, LoadBalancer             | Routes, Ingress (HAProxy)             |
+| Use Case        | DB traffic, TCP services, UDP apps | Web apps, APIs, microservices         |
+
+🔹 5. When to Use L4 vs L7
+L4 Load Balancing:
+Database connections (PostgreSQL, MySQL)
+TCP-based protocols (SMTP, MQTT)
+When speed and simplicity are critical
+
+L7 Load Balancing:
+HTTP/S web applications
+Microservices with multiple endpoints
+Need for TLS termination, routing by URL/host
+Session persistence required
+
+🔹 6. OpenShift Integration
+| Type | OpenShift Component                | Example                                            |
+| ---- | ---------------------------------- | -------------------------------------------------- |
+| L4   | NodePort / LoadBalancer service    | Expose PostgreSQL, Redis, or custom TCP service    |
+| L7   | HAProxy Ingress Controller + Route | Expose web apps, REST APIs with TLS & path routing |
+
+Diagram Summary:
+L4:
+[Client TCP] --> [NodePort/LoadBalancer] --> [Service ClusterIP] --> [Pod]
+
+L7:
+[Client HTTP/HTTPS] --> [HAProxy Ingress] --> [Route/Path Rules] --> [Service ClusterIP] --> [Pod]
+
+💡 Key Takeaways:
+L4 is simple, fast, transport-level load balancing (TCP/UDP).
+L7 is smart, application-level, handles HTTP/HTTPS, TLS, and routing rules.
+OpenShift uses NodePort / LoadBalancer for L4 and HAProxy Ingress Controller + Routes for L7.
+Choosing between L4 vs L7 depends on protocol type and routing requirements.
