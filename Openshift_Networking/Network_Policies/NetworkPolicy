@@ -1,0 +1,142 @@
+🌐 Kubernetes NetworkPolicy in OpenShift
+
+🧠 1️⃣ What is a NetworkPolicy?
+NetworkPolicy is a Kubernetes object that controls traffic flow at the network level.
+It defines rules for ingress (incoming) and egress (outgoing) traffic to/from Pods.
+Implemented by the network plugin, in OpenShift 4.x this is OVN-Kubernetes.
+Key point: By default, all Pods can communicate freely. NetworkPolicy is required to restrict traffic.
+
+2️⃣ Basic Concepts
+Pod Selector: Specifies which Pods the policy applies to.
+Namespace Selector: Can restrict traffic from Pods in specific namespaces.
+Ingress Rules: Control incoming traffic to selected Pods.
+Egress Rules: Control outgoing traffic from selected Pods.
+Policy Types: Ingress, Egress, or both.
+
+3️⃣ Default Behavior
+Without NetworkPolicy: All Pods can talk to all Pods (L3 connectivity exists).
+With NetworkPolicy: Only traffic allowed by the policy is permitted.
+Important: NetworkPolicies are “default deny” only if you explicitly define a policy with no ingress/egress for that Pod.
+
+4️⃣ NetworkPolicy Example
+
+Scenario:
+Namespace: dev
+Pods labeled: app=web
+Goal: Only allow ingress from Pods with role=frontend and deny all other traffic.
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-frontend
+  namespace: dev
+spec:
+  podSelector:
+    matchLabels:
+      app: web
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          role: frontend
+    ports:
+    - protocol: TCP
+      port: 80
+Explanation:
+podSelector: Targets Pods labeled app=web
+policyTypes: Only ingress is controlled
+ingress rule: Only Pods with role=frontend can access port 80
+All other traffic is denied automatically.
+
+5️⃣ Egress Policy Example
+Goal: Pods labeled app=web can only access 10.1.2.0/24 network externally.
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: web-egress
+  namespace: dev
+spec:
+  podSelector:
+    matchLabels:
+      app: web
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - ipBlock:
+        cidr: 10.1.2.0/24
+    ports:
+    - protocol: TCP
+      port: 443
+PodSelector: app=web
+Egress rules: Only allow HTTPS traffic to 10.1.2.0/24
+All other egress traffic is denied.
+
+6️⃣ How OpenShift Enforces NetworkPolicy
+OpenShift uses OVN-Kubernetes, which implements NetworkPolicy via logical switches and ACLs.
+When a NetworkPolicy is applied:
+OVN adds ACLs to the logical switch connecting Pods.
+Packets not matching allowed rules are dropped.
+Works for both intra-node and inter-node traffic.
+
+Flow Example:
+Pod A → Pod B (10.128.2.14)
+   │
+OVN checks ACL
+   │
+If allowed → packet delivered
+If denied → packet dropped
+
+7️⃣ Key Points
+NetworkPolicy cannot restrict traffic from nodes or external networks by default. Use EgressFirewall or firewalls for external control.
+Policies are namespace-scoped; use namespaceSelector to allow cross-namespace access.
+Multiple NetworkPolicies can apply to the same Pod: OVN merges rules additively (allow if any policy allows traffic).
+
+8️⃣ NetworkPolicy Types Summary
+| Type    | Direction       | Controls                                         | Notes                                             |
+| ------- | --------------- | ------------------------------------------------ | ------------------------------------------------- |
+| Ingress | Incoming        | Which Pods or CIDRs can connect to selected Pods | Deny all except specified sources if defined      |
+| Egress  | Outgoing        | Where selected Pods can send traffic             | Deny all except specified destinations if defined |
+| Both    | Both directions | Combines ingress and egress rules                | Additive, default deny if no rules allow          |
+
+9️⃣ Combined Example: Restricting Both Ingress & Egress
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: web-restrict
+  namespace: dev
+spec:
+  podSelector:
+    matchLabels:
+      app: web
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          role: frontend
+    ports:
+    - protocol: TCP
+      port: 80
+  egress:
+  - to:
+    - ipBlock:
+        cidr: 10.1.2.0/24
+    ports:
+    - protocol: TCP
+      port: 443
+Only Pods with role=frontend can access app=web Pods on port 80
+Only outbound HTTPS to 10.1.2.0/24 is allowed
+Everything else is denied
+
+10️⃣ Key Takeaways
+NetworkPolicy restricts traffic at Pod level (ingress and egress).
+OpenShift OVN-Kubernetes enforces policies using logical flows and ACLs.
+Default behavior without policies is allow all.
+Can restrict traffic within namespace or across namespaces.
+Use NetworkPolicy + EgressFirewall together for full traffic control (internal + external).

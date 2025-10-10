@@ -1,0 +1,102 @@
+🔒 Default “deny-all” and “allow” network policies in OpenShift
+OpenShift (like Kubernetes) uses NetworkPolicy resources to control pod-to-pod and pod-to-external traffic within the same namespace or across namespaces.
+By default, OpenShift allows all traffic between pods until you apply any NetworkPolicy — after that, only the traffic explicitly allowed is permitted.
+
+🧩 1. Default Behavior (Before Any NetworkPolicy)
+Situation	Behavior
+No NetworkPolicy exists in a namespace	✅ All pods can communicate with each other (default allow-all).
+Pods can talk across namespaces	✅ Allowed by default (no restrictions).
+Ingress/Egress from outside the cluster	✅ Allowed, depending on the service exposure (Route, Ingress, NodePort, etc.).
+So, by default, OpenShift is “allow-all.”
+
+🛑 2. Applying a “Default Deny-All” Policy
+When you apply any NetworkPolicy in a namespace, OpenShift SDN (or OVN-Kubernetes) starts enforcing rules.
+If you create a deny-all policy, it will block all incoming and/or outgoing traffic until other allow rules are defined.
+
+Example: Deny-All Ingress and Egress Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all
+  namespace: my-app
+spec:
+  podSelector: {}  # Selects all pods
+  policyTypes:
+  - Ingress
+  - Egress
+Effect:
+❌ No pod in my-app namespace can receive or send traffic.
+✅ Only the API server (control plane) and DNS are still allowed internally by system rules.
+✅ 3. Allow-All Policy (Reverting the Deny-All)
+
+If you later want to open all traffic again, you can apply an allow-all policy.
+
+Allow-All Ingress:
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-all-ingress
+  namespace: my-app
+spec:
+  podSelector: {}
+  ingress:
+  - {}  # allow all sources
+  policyTypes:
+  - Ingress
+
+Allow-All Egress:
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-all-egress
+  namespace: my-app
+spec:
+  podSelector: {}
+  egress:
+  - {}  # allow all destinations
+  policyTypes:
+  - Egress
+Effect:
+✅ All traffic (incoming and outgoing) is allowed again.
+This is equivalent to having no NetworkPolicy at all.
+
+⚙️ 4. Common Default Policies Used in Projects
+When setting up a secure namespace, administrators often create:
+| Policy Name             | Purpose                                                |
+| ----------------------- | ------------------------------------------------------ |
+| `deny-all`              | Start with no communication — baseline for zero trust. |
+| `allow-same-namespace`  | Allow only pods within the same namespace.             |
+| `allow-dns`             | Allow access to cluster DNS service.                   |
+| `allow-egress-external` | Allow only specific external destinations.             |
+
+Example (allow same-namespace only):
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace
+  namespace: my-app
+spec:
+  podSelector: {}
+  ingress:
+  - from:
+    - podSelector: {}  # allow from same namespace pods
+  policyTypes:
+  - Ingress
+
+🧠 5. Summary Table
+| Stage                  | Description                    | Default Behavior |
+| ---------------------- | ------------------------------ | ---------------- |
+| No NetworkPolicy       | All traffic allowed            | ✅                |
+| After Deny-All Policy  | All traffic blocked            | ❌                |
+| After Allow Policy     | Only specified traffic allowed | ⚙️               |
+| After Allow-All Policy | All traffic allowed again      | ✅                |
+
+🧩 6. OpenShift-Specific Note
+OpenShift’s default SDN or OVN-Kubernetes implements NetworkPolicies natively.
+Projects (namespaces) can have pre-configured policies like:
+default-deny-ingress
+default-deny-egress
+These are often auto-applied in security-hardened environments (e.g., through templates or compliance profiles).

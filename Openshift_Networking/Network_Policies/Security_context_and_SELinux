@@ -1,0 +1,134 @@
+🔐 Overview
+In OpenShift, NetworkPolicy controls which pods can talk to each other.
+But SELinux and SecurityContext control how pods are isolated at the operating system (kernel) level — including network, file system, and process boundaries.
+So together, they enforce multi-layer security isolation:
+NetworkPolicy  → Controls network connections (Layer 3/4)
+SecurityContext → Controls pod permissions inside the container
+SELinux         → Enforces kernel-level isolation between pods and nodes
+
+⚙️ 1. What Is SecurityContext in OpenShift?
+A SecurityContext defines security settings for pods and containers, such as:
+User/group IDs
+Privileged access
+Linux capabilities
+SELinux labels
+This helps OpenShift control what the pod can do, including network privileges.
+
+Example: SecurityContext in a Pod
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: secure-pod
+  namespace: dev
+spec:
+  securityContext:
+    runAsUser: 1000
+    runAsGroup: 3000
+    fsGroup: 2000
+  containers:
+  - name: app
+    image: nginx
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: ["ALL"]
+      seccompProfile:
+        type: RuntimeDefault
+Effect:
+Pod runs as non-root user
+Cannot escalate privileges
+Has no extra Linux capabilities
+Uses default seccomp for syscall filtering
+These prevent the pod from doing things like:
+Changing network interfaces
+Binding to privileged ports (e.g., 80, 443)
+Manipulating kernel network stack
+
+🧱 2. SELinux in OpenShift
+SELinux (Security-Enhanced Linux) provides Mandatory Access Control (MAC) in the Linux kernel.
+It enforces access rules using labels and policies, even if a process runs as root.
+
+Key SELinux Concepts in OpenShift:
+| Concept                 | Description                                                                                                         |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| **Labeling**            | Every process and file gets a label (security context)                                                              |
+| **Policy Enforcement**  | SELinux checks whether one label can access another (e.g., a pod process accessing network sockets)                 |
+| **Container Isolation** | Each pod runs with a unique **SELinux MCS label** so they can’t access each other’s network or filesystem resources |
+
+🧩 3. How SELinux Protects Pod Networking
+When a pod starts, OpenShift assigns a unique SELinux label to its processes and network sockets.
+This ensures:
+One pod cannot access another pod’s network namespace directly.
+Even if a container is compromised, it can’t manipulate host or peer networking.
+
+Example labels:
+| Pod   | SELinux label (example)                      |
+| ----- | -------------------------------------------- |
+| Pod A | `system_u:system_r:container_t:s0:c123,c456` |
+| Pod B | `system_u:system_r:container_t:s0:c789,c012` |
+Each pod’s MCS (Multi-Category Security) pair (like c123,c456) is unique → enforced isolation.
+
+🔒 How It Works in Networking
+Container runtime (CRI-O) uses SELinux to label network interfaces (veth pairs).
+Each pod’s veth device and process share the same SELinux context.
+The kernel enforces that only processes with the same label can use that veth interface.
+So even if two pods share the same node, their network devices can’t be hijacked.
+
+⚠️ 4. Privileged vs Restricted Context and Networking
+In OpenShift, workloads are controlled by Security Context Constraints (SCCs).
+SCCs define what a pod can do — including network operations.
+
+Example SCCs:
+| SCC            | Description                                                         | Network Capability                                |
+| -------------- | ------------------------------------------------------------------- | ------------------------------------------------- |
+| **restricted** | Default, safest SCC. Pods run as non-root with SELinux confinement. | Cannot modify network stack.                      |
+| **anyuid**     | Allows running as root UID but still with SELinux confinement.      | Limited network privileges.                       |
+| **privileged** | Full host access (used by infra pods like SDN, kube-proxy).         | Can modify host networking, use hostNetwork, etc. |
+If a pod needs special networking (like CNI plugins or routers):
+It must use privileged SCC (e.g., Ingress Controller, DNS pods).
+Normal apps use restricted SCC → enforced SELinux labels.
+
+🧰 5. Real Example — OpenShift Router (HAProxy Pod)
+The default OpenShift router (HAProxy) uses hostNetwork: true because it needs to bind to node ports (80, 443).
+Hence, it runs with a privileged SCC, allowing:
+Host networking
+NET_ADMIN capability
+SELinux label container_runtime_t
+Normal application pods don’t have this permission — their SELinux type is container_t.
+
+🧠 6. How SecurityContext + SELinux + NetworkPolicy Work Together
+| Layer               | Component             | Responsibility                                                   |
+| ------------------- | --------------------- | ---------------------------------------------------------------- |
+| **Kernel**          | SELinux               | Enforces process and network isolation between pods (same node). |
+| **Pod Spec**        | SecurityContext / SCC | Controls user IDs, capabilities, and privilege escalation.       |
+| **Cluster Network** | NetworkPolicy         | Controls traffic between pods (different nodes/namespaces).      |
+Combined Example:
+NetworkPolicy: allows frontend → backend only.
+SELinux: ensures frontend and backend containers can’t access each other’s files or interfaces directly.
+SecurityContext: ensures both run as non-root with no NET_ADMIN privileges.
+Together → defense-in-depth network isolation.
+
+✅ 7. Summary Table
+| Component                              | Function                              | Network Impact                                                 |
+| -------------------------------------- | ------------------------------------- | -------------------------------------------------------------- |
+| **SecurityContext**                    | Defines pod/container privilege level | Limits ability to modify network stack or use privileged ports |
+| **SELinux**                            | Kernel-level access control           | Isolates pods’ network interfaces & processes                  |
+| **SCC (Security Context Constraints)** | Defines allowed SecurityContexts      | Controls use of host networking or NET_ADMIN                   |
+| **NetworkPolicy**                      | Controls traffic flow (L3/L4)         | Decides which pods can communicate                             |
+| **EgressFirewall / EgressIP**          | Controls external connections         | Restricts outbound network reach                               |
+
+🧩 Visual Summary
+        +--------------------------------------------+
+        |        OpenShift Network Security Stack    |
+        +--------------------------------------------+
+        | NetworkPolicy (K8s level)                  |
+        |    → controls pod-to-pod communication     |
+        +--------------------------------------------+
+        | SecurityContext + SCC (Pod Spec level)     |
+        |    → limits privilege to alter networking  |
+        +--------------------------------------------+
+        | SELinux (Kernel level)                     |
+        |    → isolates network sockets and devices  |
+        +--------------------------------------------+
+
