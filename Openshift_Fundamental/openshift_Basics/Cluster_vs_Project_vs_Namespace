@@ -1,0 +1,102 @@
+🏗️ 1️⃣ Cluster
+📘 Definition
+A Cluster is the entire OpenShift or Kubernetes environment — all nodes, networking, storage, API servers, and workloads working together under one control plane.
+👉 It is the topmost unit in OpenShift — it contains everything (projects, namespaces, pods, etc.).
+
+🔍 Key Points
+Managed by the Control Plane (API Server, Scheduler, Controller Manager, etcd).
+A cluster can have multiple nodes (masters, workers, infra).
+You interact with it via the oc or kubectl CLI.
+All resources live inside a cluster (you can’t have a pod outside a cluster).
+
+📊 Example
+OpenShift Cluster
+├── Master Nodes
+├── Worker Nodes
+├── Infra Nodes
+└── Multiple Projects (Namespaces)
+
+Command to check cluster info:
+oc cluster-info
+oc get nodes
+
+🧩 2️⃣ Namespace
+📘 Definition
+A Namespace in Kubernetes/OpenShift is a logical isolation boundary within a cluster — used to separate and group resources like Pods, Services, and Deployments.
+It’s like a virtual cluster inside your cluster.
+
+🔍 Key Points
+Used to separate workloads and teams logically.
+Provides resource isolation (via quotas, limits, and RBAC).
+Each namespace has its own network space, so pods in different namespaces can be restricted from talking to each other via NetworkPolicies.
+Some namespaces are system-reserved, like:
+default — default workspace for users.
+kube-system — for system pods.
+openshift-* — for internal OpenShift components.
+
+📊 Example
+Cluster
+ ├── Namespace: default
+ │    └── Pods: web, db
+ ├── Namespace: dev-team
+ │    └── Pods: frontend, backend
+ └── Namespace: monitoring
+      └── Pods: prometheus, grafana
+
+Command to list namespaces:
+oc get namespaces
+
+🧱 3️⃣ Project (OpenShift concept)
+📘 Definition
+In OpenShift, a Project is essentially a Namespace with additional metadata like:
+Display name
+Description
+Owner/Role bindings
+Security Context Constraints (SCCs)
+Every Project = 1 Namespace, but OpenShift extends it with access control and user-friendly management.
+Think of a Project as:
+A Namespace + RBAC + Quotas + Annotations + Policies
+
+🔍 Key Points
+When you create a Project, OpenShift automatically creates:
+A Namespace (same name)
+Default role bindings (e.g., admin, edit, view)
+Default network policies and resource quotas
+Users can have permissions scoped to a specific project (team-based isolation).
+
+📊 Example
+Project: dev-environment
+ ├── Namespace: dev-environment
+ ├── Pods: app1, app2
+ ├── Services: frontend, backend
+ ├── Quotas: CPU=2, Memory=4Gi
+ ├── RoleBindings: admin=user1, developer=user2
+
+Commands:
+oc get projects            # list all projects
+oc project <name>          # switch current project
+oc new-project test-proj   # create new project
+
+🧠 4️⃣ Relationship Summary
+| Concept       | Scope                             | Managed By         | Purpose                                             |
+| ------------- | --------------------------------- | ------------------ | --------------------------------------------------- |
+| **Cluster**   | Whole environment                 | Cluster Admins     | Infrastructure and global configuration             |
+| **Namespace** | Logical partition inside cluster  | System / DevOps    | Isolate workloads logically                         |
+| **Project**   | OpenShift’s user-facing namespace | Developers / Teams | Simplified namespace with access control & metadata |
+
+🧾 7️⃣ Example YAML (Namespace vs Project)
+Namespace YAML:
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dev-team
+
+Project YAML (OpenShift):
+apiVersion: project.openshift.io/v1
+kind: Project
+metadata:
+  name: dev-team
+  annotations:
+    openshift.io/description: "Development environment for Team A"
+    openshift.io/display-name: "Dev Team Project"
+Creating a Project will automatically create the equivalent Namespace plus additional metadata.

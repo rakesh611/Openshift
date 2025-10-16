@@ -1,0 +1,183 @@
+1) Node roles: Master, Worker, Infra (what runs where)
+
+Master / Control-plane nodes
+Host the core control plane components that manage the cluster: API Server, Controller Manager, Scheduler, and often etcd (may be external or on separate nodes).
+Do not run user application pods (normally tainted to prevent scheduling).
+Responsible for cluster state, admission control, RBAC, etc.
+
+Worker (Compute) nodes
+Run user application pods (Deployments, StatefulSets, etc.).
+Run node agents: kubelet, kube-proxy (if used), container runtime (CRI-O in recent OpenShift), CNI plugin components (OVN/SDN agents), and monitoring/metrics agents.
+
+Infrastructure (Infra) nodes — optional but common
+Dedicated to platform services that are not customer workloads, for stability and security. Typical services:
+Router / Ingress (HAProxy router in traditional OpenShift)
+Image registry
+Logging stack (EFK/Opensearch etc.)
+Metrics/Monitoring (Prometheus, Thanos)
+Build controllers, CI/CD services (Jenkins)
+By isolating these, you keep platform traffic predictable and avoid noisy-neighbor problems.
+
+2) Control plane components: API Server, Controller Manager, Scheduler — roles & interactions
+
+API Server (kube-apiserver / openshift-apiserver)
+The front door for the cluster. Every kubectl/oc request and every internal component communicates with the API server.
+Validates and persists resource objects (pods, services, deployments) to etcd.
+Implements admission controllers (security checks, resource defaults, SCC in OpenShift).
+
+Controller Manager (kube-controller-manager / OpenShift controllers)
+Runs many small controllers (control loops) that continuously reconcile cluster state toward desired state:
+Node controller (node lifecycle)
+Replication / Deployment controllers (ensure desired pod counts)
+Endpoints controller (service endpoints)
+OpenShift also has additional controllers (builds, image imports, routes, etc.).
+Each controller watches resources via the API server and writes changes back to the API server.
+
+Scheduler (kube-scheduler)
+Watches for unscheduled pods, selects the best node based on available resources, node selectors/affinities, taints/tolerations, and policies.
+Makes scheduling decisions and writes them to the API server which the kubelet then acts upon.
+Interaction flow (simplified):
+User creates Deployment (oc apply -f deploy.yaml) → request to API server.
+API server persists Deployment to etcd.
+Controller Manager sees desired Deployment & creates ReplicaSet/Pods.
+Pods created in API server with Pending state. Scheduler selects node and updates Pod spec.
+kubelet on that node sees Pod assigned, pulls image, starts containers, configures networking via CNI.
+
+3) etcd — the single source of truth
+etcd is a highly-available, distributed key-value store (Raft consensus) that stores all cluster state (object metadata, resource specs, secrets, configmaps, leases, etc.).
+Availability & performance are critical:
+Run etcd on odd-numbered, dedicated control nodes (3, 5, …) for quorum.
+Back up etcd regularly (etcd snapshots) and test restores.
+Keep etcd latency low; slow etcd = slow API responses and controller loops.
+Security: etcd should be secured with TLS and RBAC; access limited to API servers and operators.
+
+4) OpenShift networking — SDN vs OVN (overview + internals)
+OpenShift historically provided OpenShift SDN (based on Open vSwitch) and more recently moved to OVN-Kubernetes as the recommended production CNI for many installs. I’ll explain both concepts and then dig into OVN internals.
+
+A — High-level networking goals in OpenShift
+Provide pod-to-pod connectivity across nodes (flat or segmented network).
+Implement Service semantics (ClusterIP, NodePort, LoadBalancer).
+Enforce NetworkPolicy (who can talk to whom).
+Support ingress/egress (routes, external load balancers, egress IP).
+Scale (efficient forwarding, distributed functionality).
+
+B — OpenShift SDN (legacy / OVS based) — quick summary
+Uses Open vSwitch (OVS) on nodes.
+Modes: historically included ovs-subnet, ovs-multitenant, ovs-networkpolicy:
+Subnet mode: each node got a subnet and OVS handled L2/L3 between nodes.
+Multitenant mode: project isolation with VLAN-like behavior via network namespaces and VXLAN/gre tunnels.
+NetworkPolicy mode: focused on enforcing Kubernetes NetworkPolicy.
+Simple, integrated with OpenShift but less feature-rich and less actively developed than OVN for complex policy or large scale.
+Note: newer OpenShift versions favor OVN-Kubernetes for production.
+
+C — OVN-Kubernetes (detailed — modern default in many OCP versions)
+Key concepts (OVN components)
+OVN Northbound DB (NB) — desirable logical network configuration (logical switches, routers, ACLs).
+OVN Southbound DB (SB) — runtime representation used by local agents.
+ovn-northd — daemon that translates NB DB into SB DB and populates southbound state.
+ovn-controller — runs on each compute node, programs the local OVS datapath according to the SB DB.
+OVN CNI plugin (ovn-kubernetes) — integrates Kubernetes with OVN: when Kubernetes creates a Pod, the CNI and ovn-kube components create logical network entities.
+
+Logical network primitives
+Logical Switches — like virtual L2 segments; typically one per Kubernetes node or per network segment.
+Logical Routers — L3 connectivity between logical switches and external networks.
+Ports & MACs/IPs — each Pod gets a logical port with a fixed IP and MAC in the logical switch.
+ACLs — access control lists in the NB DB enforce NetworkPolicy rules at the OVN level (so enforcement is distributed and in kernel/OVS).
+Encapsulation — geneve (default) or vxlan used to carry traffic between nodes across the underlay network (no need for VLANs).
+Distributed NAT & Load Balancing — OVN implements distributed service VIPs and NAT; it can perform Service load balancing at the node level without traffic hairpinning to a single gateway.
+Typical dataflow for pod-to-pod
+Pod is scheduled → CNI assigns IP and creates an OVN logical port in NB DB.
+ovn-northd translates this and updates the SB DB.
+ovn-controller on each node programs the local OVS datapath so packets are forwarded to the right local interface or encapsulated to remote host.
+If the destination Pod is remote, packet gets encapsulated (geneve) and sent over the physical network to the target node, where OVS decapsulates and delivers to Pod interface.
+How NetworkPolicy is enforced
+OpenShift/OVN translates Kubernetes NetworkPolicy objects into OVN ACLs in the NB DB.
+ovn-northd / ovn-controller push these ACLs so enforcement happens in OVS (close to the data plane).
+This is more scalable than relying on iptables chains in every node.
+
+Services & load balancing
+OVN can provide distributed service VIPs: each node knows how to forward to backend pods for a given Service IP.
+This reduces the need for kube-proxy iptables hairpin behavior; in some configurations kube-proxy is reduced or disabled.
+External traffic usually hits an Ingress/Route component (HAProxy router or a cloud LB) which then routes into ClusterIP/Service VIPs.
+
+Egress and EgressIP
+
+OpenShift provides egress controls (EgressNetworkPolicy, or egress gateways using OVN).
+EgressIP functionality assigns an external IP to node(s) and programs NAT so selected Pods appear from that IP.
+
+5) Useful commands to inspect OpenShift control plane & networking
+(Execute these on a machine with oc configured to the cluster.)
+
+Get nodes and roles:
+# oc get nodes -o wide
+# oc get nodes -l node-role.kubernetes.io/master   # masters
+# oc get nodes -l node-role.kubernetes.io/worker   # workers (label may vary)
+
+Control plane pods / operators (namespaces vary by OCP version):
+oc get pods -n openshift-apiserver
+oc get pods -n openshift-controller-manager
+oc get pods -n openshift-kube-scheduler
+oc get pods -n openshift-etcd
+
+OVN components:
+oc get pods -n openshift-ovn-kubernetes
+# or
+oc get pods -n openshift-ovn-kubernetes -o wide
+
+OpenShift SDN components (if used):
+oc get pods -n openshift-sdn
+
+Check network policies and routes:
+oc get networkpolicy --all-namespaces
+oc get routes --all-namespaces
+
+Inspect pod networking:
+# On a node, view OVS/OVN state (requires node access)
+# ovs-vsctl show
+# ovn-nbctl show
+# ovn-sbctl show
+vn-sbctl show
+(Commands that query OVS/OVN need node shell access and appropriate privileges.)
+
+6) Operational best practices & troubleshooting tips
+Separate control plane & etcd: run etcd on dedicated, highly available nodes with backups.
+Use infra nodes for cluster services (registry, router, logging) to protect app workloads.
+Monitor etctd latency and health (etcdctl endpoint health / metrics).
+Network debugging:
+Start with oc get pods -o wide to see IPs and nodes.
+Use oc rsh or oc debug node/<node> to inspect local OVS/OVN state.
+Check ovn-nbctl show / ovn-sbctl show to verify logical switches, routers, and ACLs.
+Use tcpdump on host interfaces or geneve tunnels to verify encapsulation.
+NetworkPolicy issues: test by temporarily removing policies or using a permissive policy to see if reachability returns. OVN translates policies to ACLs — check NB DB ACLs.
+Service problems: verify if OVN provides VIPs and that backend endpoints are correct. Check load balancer config (OVN SB) and kube endpoint objects.
+Version changes matter: OVN and OpenShift networking internals evolve — when upgrading, consult the OpenShift docs and release notes for networking changes.
+
+7) Quick ASCII diagram (simplified)
+                  +-----------------+
+                  |   Load Balancer |
+                  +--------+--------+
+                           |
+                        Route / Ingress
+                           |
+  +------------------------+------------------------+
+  |                 Control Plane (Masters)         |
+  |  +-----------+  +-----------+  +---------------+ |
+  |  | API srv.  |  | Scheduler |  | ControllerMgr | |
+  |  +-----------+  +-----------+  +---------------+ |
+  |           \_____________|______________________  |
+  |                        |                         |
+  |                      etcd                        |
+  +--------------------------------------------------+
+                 |                |
+      +----------+                +-----------+
+      |                                     |
++-----v-----+                         +-----v-----+
+| Infra N1  |                         | Worker N1 |
+| (registry,|                         |  Pod A    |
+|  router)  |                         |  Pod B    |
++-----------+                         +-----------+
+      |                                      |
+      |    OVN logical switches/routers      |
+      +--------------------------------------+
+                 Underlay network (geneve)
+

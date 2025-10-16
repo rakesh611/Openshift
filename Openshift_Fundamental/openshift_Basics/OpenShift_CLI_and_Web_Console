@@ -1,0 +1,106 @@
+🧩 1️⃣ Overview
+| Tool                      | Type                           | Purpose                                                             | Users                                 |
+| ------------------------- | ------------------------------ | ------------------------------------------------------------------- | ------------------------------------- |
+| **`oc` CLI**              | Command Line Interface         | Scriptable, fast cluster and app management                         | DevOps, SysAdmins, Automation         |
+| **OpenShift Web Console** | Graphical User Interface (GUI) | Visual, intuitive management of projects, workloads, and monitoring | Developers, Managers, Platform Admins |
+
+⚙️ 2️⃣ oc CLI (OpenShift Client Tool)
+📘 What it is
+oc is the primary command-line interface for OpenShift.
+It extends kubectl (Kubernetes CLI) with OpenShift-specific commands, like projects, routes, builds, and templates.
+It talks directly to the OpenShift API Server via REST API calls.
+
+🔹 Installation
+# On Linux
+sudo curl -L https://mirror.openshift.com/pub/openshift-v4/clients/oc/latest/linux/oc.tar.gz | tar xz
+sudo mv oc /usr/local/bin/
+
+# On Windows (PowerShell)
+Invoke-WebRequest -Uri https://mirror.openshift.com/pub/openshift-v4/clients/oc/latest/windows/oc.zip -OutFile oc.zip
+Expand-Archive oc.zip -DestinationPath C:\oc
+
+Check version:
+oc version
+
+🔹 Login to Cluster
+oc login https://api.<cluster-name>:6443 --username=admin --password=<password>
+
+or using a token:
+oc login --token=<token> --server=https://api.<cluster-name>:6443
+
+After login, credentials are stored in:
+~/.kube/config
+
+🔹 Common oc Commands
+| Task                      | Command                          |
+| ------------------------- | -------------------------------- |
+| Check cluster info        | `oc cluster-info`                |
+| List all projects         | `oc get projects`                |
+| Switch to a project       | `oc project <project-name>`      |
+| List pods                 | `oc get pods`                    |
+| Describe pod              | `oc describe pod <name>`         |
+| Get logs                  | `oc logs <pod-name>`             |
+| Execute in container      | `oc exec -it <pod> -- /bin/bash` |
+| Create resource           | `oc create -f <file.yaml>`       |
+| Apply/update resource     | `oc apply -f <file.yaml>`        |
+| Delete resource           | `oc delete -f <file.yaml>`       |
+| Port forward              | `oc port-forward <pod> 8080:80`  |
+| Expose a service as route | `oc expose svc/<service-name>`   |
+| View routes               | `oc get routes`                  |
+
+🔹 OpenShift-specific Commands
+| Function              | Command                          | Description                          |
+| --------------------- | -------------------------------- | ------------------------------------ |
+| **Projects**          | `oc new-project dev`             | Create a new project                 |
+| **Routes**            | `oc get routes`                  | View exposed routes                  |
+| **Builds**            | `oc start-build <build-name>`    | Trigger Source-to-Image (S2I) builds |
+| **DeploymentConfigs** | `oc rollout latest <dc-name>`    | Trigger redeployment                 |
+| **Templates**         | `oc new-app <template>`          | Deploy app using template            |
+| **Policy**            | `oc adm policy add-role-to-user` | Add role-based access control (RBAC) |
+
+🔹 Admin commands (oc adm)
+For cluster administrators:
+| Task            | Command                  |
+| --------------- | ------------------------ |
+| Manage nodes    | `oc adm top nodes`       |
+| Manage projects | `oc adm new-project`     |
+| Diagnostics     | `oc adm diagnostics`     |
+| Network checks  | `oc adm inspect network` |
+| Image prune     | `oc adm prune images`    |
+
+🔹 Automation Example (CI/CD)
+In a Jenkins pipeline or shell script:
+oc login --token=$TOKEN --server=$API_URL
+oc project myapp
+oc apply -f deployment.yaml
+oc rollout status deployment/myapp
+oc get route myapp -o jsonpath='{.spec.host}'
+
+🖥️ 3️⃣ OpenShift Web Console (UI)
+📘 What it is
+The OpenShift Web Console is a browser-based interface for managing clusters, applications, and users — visually.
+It provides real-time dashboards, visual topology views, role-based access control, and application deployment wizards.
+
+Access URL typically:
+https://console-openshift-console.apps.<cluster-domain>/
+
+🔹 Web Console Views
+OpenShift provides two main UI perspectives:
+| Perspective       | Audience               | Description                                                                 |
+| ----------------- | ---------------------- | --------------------------------------------------------------------------- |
+| **Developer**     | Application developers | Build, deploy, and visualize applications; view topology, pipelines, routes |
+| **Administrator** | Cluster admins         | Manage nodes, operators, networking, storage, projects, users               |
+
+🔄 4️⃣ CLI vs Web Console — Quick Comparison
+| Feature                 | `oc` CLI                       | Web Console               |
+| ----------------------- | ------------------------------ | ------------------------- |
+| **Interface Type**      | Text/Command Line              | Graphical/Web             |
+| **Best For**            | Automation, scripting, CI/CD   | Visualization, management |
+| **Speed**               | Faster (scriptable)            | Slower, manual            |
+| **Access**              | Terminal                       | Web browser               |
+| **Customization**       | High (scripting, pipelines)    | Medium                    |
+| **Visualization**       | Limited                        | Topology, metrics, logs   |
+| **Security Control**    | Full (RBAC, SCC, adm)          | Via UI, simplified        |
+| **Cluster Admin Tasks** | `oc adm`, `oc get nodes`, etc. | Admin console             |
+| **Developer Tasks**     | `oc new-app`, `oc logs`        | Developer perspective     |
+
