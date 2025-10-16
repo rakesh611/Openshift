@@ -1,0 +1,148 @@
+🧩 Post-Install Configuration in OpenShift
+
+1️⃣ Kubeconfig Setup
+The kubeconfig file allows you to interact with your OpenShift cluster using the oc CLI or any Kubernetes-compatible tools.
+
+Step 1: Locate kubeconfig
+After installation, the kubeconfig is located in your installation directory:
+~/ocp-install/auth/kubeconfig
+
+Step 2: Set KUBECONFIG Environment Variable
+This allows the oc CLI to use your cluster credentials:
+export KUBECONFIG=~/ocp-install/auth/kubeconfig
+
+Check access:
+oc whoami
+Expected output:
+kubeadmin
+
+Step 3: Test Cluster Connectivity
+
+Get cluster info:
+oc cluster-info
+Example output:
+Kubernetes master is running at https://api.ocp.example.com:6443
+KubeDNS is running at https://api.ocp.example.com:6443/api/v1/namespaces/kube-system/services/kube-dns:dns/proxy
+
+Check nodes:
+oc get nodes
+Expected:
+| NAME     | STATUS | ROLES  | AGE | VERSION |
+| -------- | ------ | ------ | --- | ------- |
+| master-1 | Ready  | master | 1h  | v1.30.x |
+| master-2 | Ready  | master | 1h  | v1.30.x |
+| worker-1 | Ready  | worker | 1h  | v1.30.x |
+
+✅ Best Practices
+Keep a local copy of kubeconfig for automation.
+
+For multiple clusters, you can merge kubeconfigs:
+KUBECONFIG=~/.kube/config:~/ocp-install/auth/kubeconfig oc config view --flatten > ~/.kube/config
+
+Set the default context:
+oc config use-context <cluster-name>
+
+2️⃣ Cluster Operators Health Check
+OpenShift uses Cluster Operators (COs) to manage different parts of the cluster:
+etcd
+kube-apiserver
+openshift-apiserver
+ingress
+machine-config
+authentication
+
+Check Cluster Operators
+oc get co
+Expected output:
+| NAME                    | STATUS | PROGRESSING | DEGRADED | AVAILABLE | VERSION |
+| ----------------------- | ------ | ----------- | -------- | --------- | ------- |
+| authentication          | True   | False       | False    | True      | 4.14.x  |
+| etcd                    | True   | False       | False    | True      | 4.14.x  |
+| kube-apiserver          | True   | False       | False    | True      | 4.14.x  |
+| kube-controller-manager | True   | False       | False    | True      | 4.14.x  |
+| machine-config          | True   | False       | False    | True      | 4.14.x  |
+| ingress                 | True   | False       | False    | True      | 4.14.x  |
+| network                 | True   | False       | False    | True      | 4.14.x  |
+✅ All operators should be AVAILABLE=True and PROGRESSING=False.
+
+❌ If DEGRADED=True, investigate using:
+oc describe co <operator-name>
+
+Troubleshooting Cluster Operators
+| Status Issue       | Possible Cause              | Remedy                                         |
+| ------------------ | --------------------------- | ---------------------------------------------- |
+| `Progressing=True` | Installation incomplete     | Wait for bootstrap or verify ignition configs  |
+| `Degraded=True`    | Network issues, CRD failure | Check pods in `openshift-<operator>` namespace |
+| `Available=False`  | Missing resources           | Check events: `oc get events -A`               |
+
+3️⃣ Node Registration
+Nodes in OpenShift can be masters, workers, or infra.
+After installation, they should automatically register with the cluster.
+
+Check Node Status
+oc get nodes
+
+Key columns:
+NAME → hostname
+STATUS → Ready / NotReady
+ROLES → master, worker, infra
+AGE → time since node joined
+VERSION → OpenShift version
+
+Node Conditions
+oc describe node <node-name>
+
+You’ll see:
+Ready → node is operational
+MemoryPressure / DiskPressure / PIDPressure → resource issues
+Kubelet Version → ensures compatibility
+Adding Nodes (UPI / Manual)
+
+Generate a worker ignition file:
+openshift-install create ignition-configs --dir=install_dir
+
+# Use worker.ign
+Boot VM with worker ignition file (ISO/PXE).
+
+Check registration:
+oc get nodes
+Node Labels
+
+OpenShift nodes are labeled for scheduling:
+oc get nodes --show-labels
+Example labels:
+node-role.kubernetes.io/master=true
+node-role.kubernetes.io/worker=true
+region=default
+zone=default
+Labels help Operators and deployments schedule workloads correctly.
+
+Tainting Nodes
+
+Masters are tainted to prevent scheduling regular workloads:
+oc describe node master-1 | grep Taints
+# Output: node-role.kubernetes.io/master:NoSchedule
+
+To schedule workloads on master (not recommended in production):
+oc adm taint nodes master-1 node-role.kubernetes.io/master-
+
+✅ Best Practices for Node Management
+Always check node Ready status before deploying workloads.
+
+Monitor nodes via:
+oc get nodes -o wide
+oc describe nodes
+
+Use labels and taints for workload isolation.
+For VMs, ensure hypervisor resources match minimum requirements.
+
+4️⃣ Post-Install Verification Commands
+| Task                     | Command                        |
+| ------------------------ | ------------------------------ |
+| Verify nodes             | `oc get nodes`                 |
+| Verify cluster operators | `oc get co`                    |
+| Check kubeconfig         | `oc whoami`                    |
+| Cluster info             | `oc cluster-info`              |
+| Node details             | `oc describe node <node-name>` |
+| Check events             | `oc get events -A`             |
+

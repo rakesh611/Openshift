@@ -1,0 +1,123 @@
+🧩 OpenShift Prerequisites and System Requirements
+
+⚙️ 1️⃣ Supported Operating Systems
+OpenShift runs on RHEL CoreOS (RHCOS) or Red Hat Enterprise Linux (RHEL) depending on your setup:
+| Component              | Recommended OS                                                 |
+| ---------------------- | -------------------------------------------------------------- |
+| Control Plane (Master) | **RHEL CoreOS** (default, auto-provisioned by installer)       |
+| Worker Nodes           | **RHEL CoreOS** or **RHEL 8/9** (manual registration possible) |
+| Bootstrap Node         | **RHEL CoreOS** (temporary during installation)                |
+🧠 RHCOS is a minimal, immutable OS optimized for OpenShift — managed by MachineConfig Operator (MCO).
+
+🖥️ 2️⃣ Minimum Hardware Requirements
+🧱 A. Standard Cluster (3 Control + 2+ Worker Nodes)
+| Node Type                  | vCPU | RAM    | Disk   | Notes                                  |
+| -------------------------- | ---- | ------ | ------ | -------------------------------------- |
+| **Bootstrap**              | 4    | 16 GB  | 120 GB | Temporary; removed after install       |
+| **Master (Control Plane)** | 4+   | 16+ GB | 120 GB | Runs etcd, API, controllers, scheduler |
+| **Worker Node**            | 2+   | 8+ GB  | 120 GB | Runs user workloads (Pods)             |
+| **Infra Node (optional)**  | 4+   | 16+ GB | 120 GB | Hosts ingress, registry, monitoring    |
+✅ For production: 3 masters, minimum 2 workers (recommended 3+)
+
+🧩 B. Compact Cluster (3 nodes total)
+Each node runs control plane + worker components.
+| Node               | vCPU | RAM   | Disk    |
+| ------------------ | ---- | ----- | ------- |
+| Master+Worker (x3) | 8+   | 32 GB | 120 GB+ |
+🔹 Minimum 3 nodes for HA (etcd quorum)
+
+🧩 C. Single Node OpenShift (SNO)
+| Node        | vCPU | RAM   | Disk   |
+| ----------- | ---- | ----- | ------ |
+| Single node | 8    | 32 GB | 120 GB |
+🔹 No HA, suitable for edge or PoC.
+
+🌐 3️⃣ Networking Requirements
+🔸 A. Network Topology
+OpenShift assumes a flat Layer 3 network with full connectivity between:
+Bootstrap ↔ Master ↔ Worker nodes
+API Load Balancer and all nodes
+DNS resolution (forward and reverse)
+
+🔸 B. Ports and Protocols
+| Purpose                       | Port(s)   | Protocol | Source → Destination     |
+| ----------------------------- | --------- | -------- | ------------------------ |
+| **API Server**                | 6443      | TCP      | Clients → Masters        |
+| **etcd**                      | 2379–2380 | TCP      | Masters ↔ Masters        |
+| **Machine Config / Ignition** | 22623     | TCP      | Bootstrap → Nodes        |
+| **Ingress / Apps**            | 80, 443   | TCP      | External → Workers/Infra |
+| **SSH (optional)**            | 22        | TCP      | Admin → All nodes        |
+
+🔸 C. DNS Records (Required)
+| Record Type       | Example                   | Description                    |
+| ----------------- | ------------------------- | ------------------------------ |
+| **API endpoint**  | `api.ocp.example.com`     | Used by CLI and web console    |
+| **Internal API**  | `api-int.ocp.example.com` | Internal cluster communication |
+| **Wildcard apps** | `*.apps.ocp.example.com`  | Routes for all OpenShift apps  |
+All must resolve to your Load Balancer VIP or appropriate node IPs.
+
+🔸 D. Load Balancer Requirements
+You must configure load balancers for:
+API Server: TCP 6443 (masters)
+Ingress Controller: TCP 80, 443 (workers/infra)
+Machine Config Server: TCP 22623 (bootstrap/master)
+For UPI, you configure these manually.
+For IPI, installer creates them automatically (e.g., AWS ELB).
+
+🔑 4️⃣ Authentication & Access Requirements
+| Requirement              | Details                                                          |
+| ------------------------ | ---------------------------------------------------------------- |
+| **SSH Key**              | Needed to access CoreOS nodes for debugging (`core` user)        |
+| **Pull Secret**          | Required from Red Hat Customer Portal to access container images |
+| **Base Domain**          | Example: `example.com` (must be managed by DNS)                  |
+| **Cluster Name**         | Example: `ocp`, resulting in `ocp.example.com`                   |
+| **Red Hat Subscription** | Needed for RHEL systems & support entitlements                   |
+
+☁️ 5️⃣ Cloud / Virtualization Prerequisites
+🔸 For IPI (Cloud)
+| Platform    | Requirements                                            |
+| ----------- | ------------------------------------------------------- |
+| **AWS**     | IAM access, Route53 zone, EC2, VPC, ELB permissions     |
+| **Azure**   | Subscription, Service Principal credentials             |
+| **GCP**     | Service account with compute & DNS permissions          |
+| **vSphere** | Datacenter, cluster, datastore, VM template permissions |
+
+🔸 For UPI (On-prem or KVM)
+| Component         | Requirement                      |
+| ----------------- | -------------------------------- |
+| **Hypervisor**    | KVM, VMware, oVirt, etc.         |
+| **Load Balancer** | HAProxy, F5, or Keepalived setup |
+| **DNS Server**    | BIND, dnsmasq, or external DNS   |
+| **Storage**       | NFS, iSCSI, Ceph, or local PVs   |
+
+🧮 7️⃣ Resource Summary Table
+| Component | vCPU | Memory | Disk   | Count    | Purpose                       |
+| --------- | ---- | ------ | ------ | -------- | ----------------------------- |
+| Bootstrap | 4    | 16 GB  | 120 GB | 1        | Temporary install helper      |
+| Master    | 4    | 16 GB  | 120 GB | 3        | Control Plane                 |
+| Worker    | 2    | 8 GB   | 120 GB | 2+       | Workload nodes                |
+| Infra     | 4    | 16 GB  | 120 GB | Optional | Ingress, registry, monitoring |
+
+🧠 9️⃣ Preflight Checklist
+
+✅ RHCOS/RHEL base images downloaded
+✅ Pull secret ready
+✅ SSH key generated and added
+✅ DNS records created
+✅ Load balancers configured
+✅ Sufficient CPU/RAM/disk
+✅ Internet or local mirror (for air-gapped)
+✅ Network ports open between nodes
+✅ Subscription or entitlement configured
+
+📊 Summary
+| Category    | Requirement                                        |
+| ----------- | -------------------------------------------------- |
+| OS          | RHEL CoreOS / RHEL 8/9                             |
+| CPU         | 4–8 vCPUs (min), 8+ recommended for production     |
+| Memory      | 16 GB min per master, 8+ per worker                |
+| Storage     | 120 GB min per node                                |
+| Network     | Static IPs, DNS, LBs, open ports                   |
+| Tools       | `openshift-install`, `oc`, `kubectl`               |
+| Credentials | SSH key, Pull secret, Domain, Red Hat subscription |
+

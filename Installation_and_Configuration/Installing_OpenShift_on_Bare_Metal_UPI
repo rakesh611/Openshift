@@ -1,0 +1,250 @@
+🧩 Installing OpenShift on Bare Metal (UPI — User-Provisioned Infrastructure)
+
+⚙️ UPI (User-Provisioned Infrastructure) means you set up all hardware, networking, DNS, and load balancers manually.
+The OpenShift installer only deploys the software components.
+🧱 1️⃣ Overview — Architecture of Bare Metal OpenShift
+
+A typical bare-metal OCP cluster includes:
+| Node Type                    | Count | Description                              |
+| ---------------------------- | ----- | ---------------------------------------- |
+| **Bootstrap**                | 1     | Temporary node used during installation  |
+| **Master (Control Plane)**   | 3     | Runs etcd, API, scheduler, controller    |
+| **Worker**                   | 2+    | Runs your application workloads          |
+| *(Optional)* **Infra Nodes** | 1+    | Hosts ingress, registry, monitoring pods |
+
+🧭 High-Level Topology
+             +-------------------------------------+
+             |          Load Balancer (HAProxy)     |
+             |-------------------------------------|
+             | api.ocp.example.com:6443 → Masters   |
+             | api-int.ocp.example.com → Masters    |
+             | *.apps.ocp.example.com → Workers     |
+             +-------------------------------------+
+
+     +-----------+   +-----------+   +-----------+
+     | Master-1  |   | Master-2  |   | Master-3  |  (Control Plane)
+     +-----------+   +-----------+   +-----------+
+           |                |               |
+           +---------------------------------+
+                             |
+                     +---------------+
+                     | Bootstrap Node |
+                     +---------------+
+                             |
+                     +---------------+
+                     | Worker Nodes   |
+                     +---------------+
+
+
+2️⃣ Prerequisites Checklist
+🔸 Hardware
+| Node      | CPU | RAM   | Disk   |
+| --------- | --- | ----- | ------ |
+| Bootstrap | 4   | 16 GB | 120 GB |
+| Master    | 4   | 16 GB | 120 GB |
+| Worker    | 2+  | 8 GB+ | 120 GB |
+✅ Minimum 3 Masters (for etcd quorum)
+✅ Workers: at least 2 (recommended 3+)
+
+🔸 Network Requirements
+| Component     | Example                   | Description                             |
+| ------------- | ------------------------- | --------------------------------------- |
+| Base domain   | `example.com`             | Parent domain managed by your DNS       |
+| Cluster name  | `ocp`                     | Forms the full domain `ocp.example.com` |
+| API endpoint  | `api.ocp.example.com`     | Used by CLI/web console                 |
+| Internal API  | `api-int.ocp.example.com` | Internal cluster API                    |
+| Wildcard apps | `*.apps.ocp.example.com`  | Application routes                      |
+All must resolve correctly via DNS.
+
+🔸 Required Ports
+| Port      | Protocol | Purpose                    |
+| --------- | -------- | -------------------------- |
+| 22        | TCP      | SSH access                 |
+| 6443      | TCP      | API Server                 |
+| 22623     | TCP      | MachineConfig/Ignition     |
+| 80, 443   | TCP      | Application ingress        |
+| 2379-2380 | TCP      | etcd cluster communication |
+
+🔸 Software/Files Needed
+OpenShift Installer
+oc CLI client
+Pull Secret (from Red Hat account)
+SSH key for RHCOS access
+Base RHCOS ISO and RootFS (for bare metal boot)
+
+🧰 3️⃣ Step-by-Step Installation (Bare Metal UPI)
+
+Step 1: Prepare DNS
+Create DNS records for the following:
+| Record                     | Type | Points To                        |
+| -------------------------- | ---- | -------------------------------- |
+| `api.ocp.example.com`      | A    | Load Balancer VIP (API)          |
+| `api-int.ocp.example.com`  | A    | Load Balancer VIP (API internal) |
+| `*.apps.ocp.example.com`   | A    | Load Balancer VIP (Ingress)      |
+| `master-1.ocp.example.com` | A    | Master-1 IP                      |
+| `master-2.ocp.example.com` | A    | Master-2 IP                      |
+| `master-3.ocp.example.com` | A    | Master-3 IP                      |
+| `worker-1.ocp.example.com` | A    | Worker-1 IP                      |
+etc.
+Also add reverse DNS (PTR) entries.
+
+Step 2: Configure Load Balancers
+Use HAProxy, F5, or similar.
+
+Example HAProxy configuration:
+frontend api_frontend
+    bind *:6443
+    default_backend api_backend
+
+backend api_backend
+    balance roundrobin
+    server master1 192.168.1.21:6443 check
+    server master2 192.168.1.22:6443 check
+    server master3 192.168.1.23:6443 check
+
+frontend machineconfig_frontend
+    bind *:22623
+    default_backend machineconfig_backend
+
+backend machineconfig_backend
+    balance roundrobin
+    server master1 192.168.1.21:22623 check
+    server master2 192.168.1.22:22623 check
+    server master3 192.168.1.23:22623 check
+
+frontend ingress_http
+    bind *:80
+    default_backend ingress_backend
+frontend ingress_https
+    bind *:443
+    default_backend ingress_backend
+
+backend ingress_backend
+    balance roundrobin
+    server worker1 192.168.1.24:80 check
+    server worker2 192.168.1.25:80 check
+
+Step 3: Download OpenShift Binaries
+wget https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/openshift-install-linux.tar.gz
+wget https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/openshift-client-linux.tar.gz
+tar -xvf openshift-install-linux.tar.gz
+tar -xvf openshift-client-linux.tar.gz
+mv oc kubectl openshift-install /usr/local/bin/
+
+Step 4: Generate Installation Config
+Create a directory for your cluster:
+mkdir install_dir
+cd install_dir
+
+Run the installer:
+openshift-install create install-config --dir=.
+Answer the prompts:
+Platform: baremetal / none
+Base domain: example.com
+Cluster name: ocp
+Pull secret: paste from Red Hat portal
+SSH key: ~/.ssh/id_rsa.pub
+This creates an install-config.yaml file.
+
+Step 5: Generate Ignition Files
+openshift-install create manifests --dir=.
+openshift-install create ignition-configs --dir=.
+
+This generates:
+bootstrap.ign
+master.ign
+worker.ign
+
+Step 6: Boot Bare Metal Nodes
+
+Option A: PXE Boot
+Use PXE to boot each node with:
+coreos.inst.install_dev=/dev/sda
+coreos.inst.ignition_url=http://<webserver>/<ign-file>
+
+Option B: ISO Boot
+Mount RHCOS ISO, attach Ignition config via kernel arguments:
+coreos.inst.ignition_url=http://192.168.1.10:8080/bootstrap.ign
+You can serve ignition files using a simple HTTP server:
+python3 -m http.server 8080
+
+Step 7: Monitor Installation
+Check bootstrap progress:
+openshift-install wait-for bootstrap-complete --dir=.
+When complete, shut down or delete the bootstrap node.
+
+Then finalize installation:
+openshift-install wait-for install-complete --dir=.
+
+You’ll get:
+Web Console URL: https://console-openshift-console.apps.ocp.example.com
+kubeadmin password: from auth/kubeadmin-password
+
+Step 8: Post-Installation Verification
+export KUBECONFIG=install_dir/auth/kubeconfig
+oc get nodes
+oc get co
+oc get pods -A
+
+Expected output:
+All nodes Ready
+All cluster operators Available=True
+
+🔒 4️⃣ Air-Gapped or Disconnected Installation (Optional)
+For datacenters without Internet:
+Mirror OpenShift images to local registry:
+oc adm release mirror --from=quay.io/openshift-release-dev/ocp-release:4.x.x-x86_64 \
+  --to=registry.local:5000/ocp4/openshift4 \
+  --to-release-image=registry.local:5000/ocp4/release:4.x.x-x86_64
+Update install-config.yaml to reference local image registry.
+Provide local mirror CA certificates during installation.
+
+🧾 5️⃣ Validation Commands
+Check API and console access:
+curl -k https://api.ocp.example.com:6443/version
+oc whoami
+
+Check etcd health:
+oc debug node/master-1
+chroot /host
+etcdctl endpoint health
+
+🧩 6️⃣ Common Bare Metal Issues
+| Issue                   | Cause                           | Fix                                            |
+| ----------------------- | ------------------------------- | ---------------------------------------------- |
+| Bootstrap stuck         | DNS or LB misconfiguration      | Check `api-int` and 22623                      |
+| etcd not forming quorum | Master nodes not resolving      | Check `/etc/hosts` or DNS                      |
+| Worker not joining      | Wrong Ignition or network issue | Validate `worker.ign` URL                      |
+| Console not opening     | Missing wildcard DNS            | Ensure `*.apps.ocp.example.com` resolves to LB |
+
+📊 7️⃣ Bare Metal Installation Summary
+| Step | Task                         | Key Command/Tool                                |
+| ---- | ---------------------------- | ----------------------------------------------- |
+| 1    | Prepare DNS & Load Balancer  | `haproxy.cfg`                                   |
+| 2    | Create `install-config.yaml` | `openshift-install create install-config`       |
+| 3    | Generate ignition files      | `openshift-install create ignition-configs`     |
+| 4    | Boot nodes                   | ISO/PXE + ignition URLs                         |
+| 5    | Monitor bootstrap            | `openshift-install wait-for bootstrap-complete` |
+| 6    | Remove bootstrap             | `oc get nodes` verify                           |
+| 7    | Complete install             | `openshift-install wait-for install-complete`   |
+
+🧠 8️⃣ Recommended Enhancements
+
+✅ Add Infra nodes for ingress, registry, and monitoring
+✅ Use MetalLB for LoadBalancer services in bare metal
+✅ Configure StorageClass (e.g., NFS, Ceph, or iSCSI)
+✅ Integrate Prometheus and Grafana for monitoring
+
+🎯 Final Output
+
+After successful installation:
+$ oc get nodes
+NAME       STATUS   ROLES                  AGE   VERSION
+master-1   Ready    master,worker          2h    v1.30.1
+master-2   Ready    master,worker          2h    v1.30.1
+master-3   Ready    master,worker          2h    v1.30.1
+worker-1   Ready    worker                 1h    v1.30.1
+worker-2   Ready    worker                 1h    v1.30.1
+
+Web console:
+👉 https://console-openshift-console.apps.ocp.example.com
