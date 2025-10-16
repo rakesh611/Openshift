@@ -1,0 +1,217 @@
+🧩 OpenShift Workload Objects: Pods, ReplicaSets, Deployments, StatefulSets, DaemonSets
+OpenShift uses Kubernetes CRDs (Custom Resource Definitions) for workloads. All of these objects are abstracted resources that control how containers run in the cluster.
+
+1️⃣ Pods
+Definition
+The smallest deployable unit in OpenShift/Kubernetes.
+A pod can contain one or more containers that share:
+Network namespace (IP, ports)
+Storage volumes
+Key Characteristics
+Ephemeral by default — if a pod dies, it does not auto-restart unless controlled by a higher-level controller (Deployment, ReplicaSet, etc.).
+Each pod has a unique IP.
+Containers inside a pod can communicate via localhost.
+
+OpenShift Example: Single Pod
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-pod
+  labels:
+    app: nginx
+spec:
+  containers:
+  - name: nginx
+    image: nginx:latest
+    ports:
+    - containerPort: 80
+
+Check pod:
+oc get pods
+oc describe pod my-pod
+oc logs my-pod
+
+2️⃣ ReplicaSets
+Definition
+Ensures that a specified number of pod replicas are running at all times.
+Automatically creates or deletes pods to match the desired replica count.
+Key Characteristics
+Directly managing ReplicaSets is rare; usually managed via Deployments.
+Useful when you need replication but no rolling updates.
+
+Example
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: nginx-rs
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:latest
+
+Check status:
+oc get rs
+oc describe rs nginx-rs
+🔹 This ensures 3 pods always run. If one pod crashes, the ReplicaSet recreates it.
+
+3️⃣ Deployments
+Definition
+Declarative method to manage ReplicaSets and Pods.
+Handles rolling updates, rollbacks, and scaling automatically.
+Most common way to deploy apps in OpenShift.
+
+Key Features
+Rolling updates: update pods without downtime
+Rollbacks: revert to a previous version
+Declarative YAML management
+Integrates with OpenShift DeploymentConfigs (legacy OpenShift object, optional)
+
+Example
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.21
+        ports:
+        - containerPort: 80
+
+Operations:
+
+# Scale deployment
+oc scale deployment/nginx-deployment --replicas=5
+
+# Rolling update
+oc set image deployment/nginx-deployment nginx=nginx:1.22
+
+# Rollback
+oc rollout undo deployment/nginx-deployment
+✅ Deployment automatically manages ReplicaSets and Pods.
+
+4️⃣ StatefulSets
+Definition
+Used for stateful applications that require stable identities and persistent storage.
+Each pod has:
+Stable network ID: pod-0, pod-1
+Stable storage: PersistentVolumeClaims (PVC) remain after pod deletion
+Examples: databases (PostgreSQL, MySQL), Kafka, Elasticsearch
+
+Key Features
+Ordered deployment & scaling (pod-0, pod-1, …)
+Ordered deletion & termination
+Guarantees persistent storage per pod
+
+Example
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql
+spec:
+  serviceName: "mysql"
+  replicas: 3
+  selector:
+    matchLabels:
+      app: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      containers:
+      - name: mysql
+        image: mysql:8.0
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          value: password
+        ports:
+        - containerPort: 3306
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/mysql
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 10Gi
+
+Check status:
+oc get sts
+oc describe sts mysql
+Each pod gets a unique name (mysql-0, mysql-1) and persistent storage.
+
+5️⃣ DaemonSets
+Definition
+Ensures one pod runs on each node (or selected nodes) in the cluster.
+Ideal for node-level services:
+Logging (Fluentd)
+Monitoring (Prometheus Node Exporter)
+Networking (OVN CNI, Calico Daemon pods)
+
+Key Features
+Automatically runs on new nodes when added
+Can be restricted via node selectors or taints
+Useful for cluster-wide agents
+
+Example
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-exporter
+  namespace: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: node-exporter
+  template:
+    metadata:
+      labels:
+        app: node-exporter
+    spec:
+      containers:
+      - name: node-exporter
+        image: quay.io/prometheus/node-exporter:latest
+        ports:
+        - containerPort: 9100
+
+Check DaemonSet:
+oc get ds -n monitoring
+oc describe ds node-exporter -n monitoring
+✅ Each node in the cluster runs one node-exporter pod.
+
+🧠 6️⃣ Workload Object Comparison Table
+| Object      | Pods Managed | Updates                   | Scaling       | Use Case                 |
+| ----------- | ------------ | ------------------------- | ------------- | ------------------------ |
+| Pod         | No           | Manual                    | Manual        | Single container or test |
+| ReplicaSet  | Yes          | Manual                    | Yes           | Ensure desired pod count |
+| Deployment  | Yes          | Automated rolling updates | Yes           | Stateless app deployment |
+| StatefulSet | Yes          | Ordered rolling updates   | Yes (ordered) | Databases, stateful apps |
+| DaemonSet   | Yes          | Automatic                 | No (per node) | Node-level services      |
+
+🔧 7️⃣ OpenShift Specific Notes
+OpenShift DeploymentConfigs are an older OpenShift-specific controller, similar to Deployment but with advanced triggers and hooks.
+Pods can be monitored in OpenShift Web Console or CLI (oc get pods -A).
+Labels and annotations are key for Deployment/StatefulSet/DaemonSet selectors.
+For scaling workloads: oc scale, oc autoscale (HPA).
