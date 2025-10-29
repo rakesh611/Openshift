@@ -1,0 +1,151 @@
+🔹 What is a ConfigMap?
+A ConfigMap is an OpenShift (and Kubernetes) API object that lets you inject configuration data into containers.
+It can contain:
+Simple key-value pairs
+Entire configuration files
+Command-line arguments
+Environment variables
+
+🔹 Why use ConfigMaps?
+Keep app configuration outside the image
+Easily update configuration without rebuilding containers
+Allow different environments (dev, test, prod) with same app image
+Centralized management of configuration
+
+🔹 Ways to Create ConfigMaps
+You can create ConfigMaps in multiple ways:
+
+1️⃣ From literal key-value pairs
+oc create configmap my-config --from-literal=APP_MODE=production --from-literal=MAX_RETRIES=5
+
+2️⃣ From a file
+oc create configmap my-config --from-file=config.json
+
+3️⃣ From a directory
+oc create configmap my-config --from-file=/etc/config/
+
+4️⃣ From a YAML manifest
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  APP_MODE: "production"
+  DATABASE_URL: "postgres://user:pass@db:5432/mydb"
+
+Apply using:
+oc apply -f configmap.yaml
+
+🔹 Viewing ConfigMaps
+oc get configmaps
+oc describe configmap app-config
+oc get configmap app-config -o yaml
+
+🔹 Using ConfigMaps in Pods
+You can use ConfigMaps in three main ways:
+
+1️⃣ As Environment Variables
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mypod
+spec:
+  containers:
+  - name: app
+    image: nginx
+    envFrom:
+    - configMapRef:
+        name: app-config
+👉 All keys in app-config become environment variables in the container.
+
+2️⃣ As Specific Environment Variables
+Allow different environments (dev, test, prod) with same app image
+Centralized management of configuration
+
+🔹 Ways to Create ConfigMaps
+You can create ConfigMaps in multiple ways:
+
+1️⃣ From literal key-value pairs
+oc create configmap my-config --from-literal=APP_MODE=production --from-literal=MAX_RETRIES=5
+
+2️⃣ From a file
+oc create configmap my-config --from-file=config.json
+
+3️⃣ From a directory
+oc create configmap my-config --from-file=/etc/config/
+
+4️⃣ From a YAML manifest
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  APP_MODE: "production"
+  DATABASE_URL: "postgres://user:pass@db:5432/mydb"
+Apply using:
+oc apply -f configmap.yaml
+
+🔹 Viewing ConfigMaps
+oc get configmaps
+oc describe configmap app-config
+oc get configmap app-config -o yaml
+
+🔹 Using ConfigMaps in Pods
+You can use ConfigMaps in three main ways:
+
+1️⃣ As Environment Variables
+env:
+  - name: APP_MODE
+    valueFrom:
+      configMapKeyRef:
+        name: app-config
+        key: APP_MODE
+
+3️⃣ As Configuration Files (Mounted Volume)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: configmap-volume-pod
+spec:
+  containers:
+  - name: mycontainer
+    image: nginx
+    volumeMounts:
+    - name: config-volume
+      mountPath: /etc/config
+  volumes:
+  - name: config-volume
+    configMap:
+      name: app-config
+👉 All ConfigMap keys become files under /etc/config inside the container.
+
+🔹 Updating a ConfigMap
+Edit directly:
+oc edit configmap app-config
+
+Or recreate:
+oc create configmap app-config --from-literal=APP_MODE=staging -o yaml --dry-run=client | oc apply -f -
+⚠️ Note: ConfigMap updates do not automatically restart pods using it (unless a mechanism like Deployment trigger or checksum annotation is used).
+
+🔹 Example in Deployment (OpenShift)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deploy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:latest
+        envFrom:
+        - configMapRef:
+            name: app-config
+
