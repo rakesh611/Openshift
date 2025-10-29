@@ -1,0 +1,154 @@
+🧱 What is a Deployment Strategy in OpenShift?
+A Deployment Strategy defines how new application versions are rolled out to replace the existing running version (Pods).
+It controls how downtime, traffic, and rollbacks are managed during an update.
+
+⚙️ Common Deployment Strategies in OpenShift
+OpenShift (and Kubernetes) supports multiple deployment strategies, mainly:
+Rolling Strategy (default)
+Recreate Strategy
+Blue-Green Deployment
+Canary Deployment
+
+🔹 1. Rolling Strategy (Default in OpenShift)
+
+📘 Description:
+New Pods are created gradually while old Pods are terminated incrementally.
+Ensures zero downtime.
+The new version slowly replaces the old one, one batch at a time.
+
+🧩 How it works:
+Starts new Pods with the new version.
+Waits until they are ready (health checks OK).
+Gradually terminates old Pods.
+Keeps the service available during the rollout.
+
+✅ Use Case:
+When you want zero downtime and your app can handle multiple versions simultaneously (stateless apps).
+
+🔧 Example (DeploymentConfig):
+strategy:
+  type: Rolling
+  rollingParams:
+    intervalSeconds: 1
+    updatePeriodSeconds: 1
+    timeoutSeconds: 600
+    maxUnavailable: 25%
+    maxSurge: 25%
+⏱ Key Parameters:
+| Parameter        | Description                                 |
+| ---------------- | ------------------------------------------- |
+| `maxUnavailable` | % of Pods allowed to be down during rollout |
+| `maxSurge`       | % of extra Pods allowed temporarily         |
+| `timeoutSeconds` | Rollout timeout limit                       |
+
+🔹 2. Recreate Strategy
+
+📘 Description:
+Stops all existing Pods first, then starts the new ones.
+Causes downtime during deployment.
+Useful for stateful applications or apps that can’t handle multiple versions running at once.
+
+🧩 How it works:
+All current Pods are terminated.
+New Pods are created after the old ones stop.
+
+✅ Use Case:
+Database updates.
+Stateful apps or apps that use file locks or non-shareable resources.
+
+🔧 Example:
+strategy:
+  type: Recreate
+
+⚠️ Note:
+Expect temporary downtime between old Pods stopping and new Pods starting.
+
+🔹 3. Blue-Green Deployment
+
+📘 Description:
+Two separate environments (Blue and Green) exist:
+Blue = current live version.
+Green = new version to test.
+After verifying Green deployment, traffic is switched from Blue → Green (via Route or Service).
+
+🧩 How it works:
+Deploy new version (Green) alongside the old (Blue).
+Test the new version (Green) using internal URL.
+Once verified, switch the Route to point to Green.
+Optionally delete old Blue pods.
+
+✅ Use Case:
+When you need safe and reversible deployments.
+For production apps needing manual or gradual switching.
+
+🔧 Example Commands:
+
+# Deploy blue version
+oc new-app myapp:blue --name=myapp-blue
+
+# Deploy green version
+oc new-app myapp:green --name=myapp-green
+
+# Route traffic to green
+oc patch route myapp -p '{"spec":{"to":{"name":"myapp-green"}}}'
+
+⚙️ Benefit:
+Instant rollback: just switch Route back to Blue.
+
+🔹 4. Canary Deployment
+
+📘 Description:
+Deploys a small percentage of traffic to the new version first.
+If it performs well, gradually increases traffic until 100%.
+Allows testing in real production with minimal risk.
+
+🧩 How it works:
+Deploy the new version (Canary).
+Route a small % of traffic to it.
+Monitor metrics (errors, latency, etc.).
+If stable → increase traffic; else → rollback.
+
+✅ Use Case:
+For progressive delivery and A/B testing.
+Large-scale apps where risk minimization is critical.
+
+🔧 Example using OpenShift Routes:
+# Two deployments
+oc new-app myapp:v1 --name=myapp-stable
+oc new-app myapp:v2 --name=myapp-canary
+
+# Split traffic 90% (stable), 10% (canary)
+oc set route-backends myapp myapp-stable=90 myapp-canary=10
+
+🔁 Gradual shift:
+# Increase canary share
+oc set route-backends myapp myapp-stable=70 myapp-canary=30
+
+🧾 Comparison Summary
+| Strategy       | Downtime             | Parallel Versions | Rollback Speed | Best For                                      |
+| -------------- | -------------------- | ----------------- | -------------- | --------------------------------------------- |
+| **Rolling**    | ❌ No                 | ✅ Yes             | ⚡ Medium       | Stateless apps needing zero downtime          |
+| **Recreate**   | ✅ Yes                | ❌ No              | ⚡ Fast         | Stateful apps or DB migrations                |
+| **Blue-Green** | ❌ (Switch time only) | ✅ Yes             | ⚡ Very Fast    | Production apps needing manual safe switch    |
+| **Canary**     | ❌ No                 | ✅ Yes             | ⚡ Gradual      | Large-scale apps, testing new versions safely |
+
+🧠 Bonus: How to Check Deployment Strategy
+To check how your app deploys:
+oc get dc <deployment-name> -o yaml | grep strategy -A5
+
+To update strategy:
+oc patch dc myapp -p '{"spec":{"strategy":{"type":"Rolling"}}}'
+
+🚀 Real-World Flow Example (Rolling Update)
+# Check existing deployment
+oc get dc myapp
+
+# Update image
+oc set image dc/myapp myapp=image-registry.openshift-image-registry.svc:5000/demo/myapp:v2
+
+# Watch rollout progress
+oc rollout status dc/myapp
+
+# Rollback if needed
+oc rollout undo dc/myapp
+
