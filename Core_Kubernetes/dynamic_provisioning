@@ -1,0 +1,158 @@
+⚙️ What is Dynamic Provisioning in OpenShift?
+Dynamic Provisioning is the process where Persistent Volumes (PVs) are created automatically in response to a Persistent Volume Claim (PVC) — without any manual storage setup by the cluster administrator.
+In simple words:
+👉 You (developer) create a PVC →
+👉 OpenShift (automatically) creates a matching PV using a StorageClass →
+👉 Your Pod mounts it →
+✅ No manual PV creation needed.
+
+🧩 Why Dynamic Provisioning?
+Without dynamic provisioning:
+The cluster admin must manually create PVs ahead of time.
+If a PVC request doesn’t exactly match, it stays Pending.
+This is hard to manage in large clusters with many applications.
+With dynamic provisioning:
+PVCs automatically get storage.
+Different applications can use different StorageClasses (e.g., SSD, NFS, Ceph, etc.)
+Simplifies DevOps workflows and self-service storage for developers.
+
+🧱 Dynamic Provisioning Components
+| Component                         | Description                                                                           |
+| --------------------------------- | ------------------------------------------------------------------------------------- |
+| **StorageClass**                  | Defines how storage is dynamically created (provisioner, parameters, reclaim policy)  |
+| **Persistent Volume Claim (PVC)** | User request for storage; references a StorageClass                                   |
+| **Provisioner**                   | The plugin (like AWS EBS, NFS, Ceph, GlusterFS, etc.) that creates the PV dynamically |
+| **Persistent Volume (PV)**        | Automatically created by the provisioner when PVC is made                             |
+
+🔄 Dynamic Provisioning Flow
+Here’s what happens step by step:
+StorageClass is created by an admin (defines backend like NFS, Ceph, AWS, etc.)
+Developer creates a PVC specifying that StorageClass.
+The Provisioner (plugin) watches for new PVCs.
+When PVC matches a StorageClass:
+The provisioner creates a new PV dynamically.
+PV and PVC become Bound.
+The Pod mounts the PVC and starts using the storage.
+
+📦 Example: Dynamic Provisioning in OpenShift
+
+1️⃣ Create a StorageClass
+
+Example using NFS as backend:
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: nfs-storage
+provisioner: kubernetes.io/nfs
+parameters:
+  server: 192.168.122.10
+  path: /nfs/data
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+This StorageClass tells OpenShift how to create storage volumes on the NFS server.
+
+2️⃣ Create a PVC using that StorageClass
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: app-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: nfs-storage
+  resources:
+    requests:
+      storage: 10Gi
+➡️ Once this PVC is created:
+OpenShift looks at storageClassName: nfs-storage
+The provisioner (kubernetes.io/nfs) creates a new PV of 10Gi
+PVC automatically binds to that PV
+
+3️⃣ Use the PVC in a Pod
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-pod
+spec:
+  containers:
+  - name: nginx
+    image: nginx
+    volumeMounts:
+    - mountPath: /usr/share/nginx/html
+      name: storage
+  volumes:
+  - name: storage
+    persistentVolumeClaim:
+      claimName: app-data
+Now your nginx container uses dynamically provisioned storage at /usr/share/nginx/html.
+
+🧠 Advantages of Dynamic Provisioning
+| Benefit                                | Description                                                  |
+| -------------------------------------- | ------------------------------------------------------------ |
+| 🔄 **Automatic PV creation**           | No manual setup — PVs created on-demand                      |
+| ⏱ **Time saving**                      | Reduces manual work for cluster admins                       |
+| 📦 **Self-service for developers**     | Developers can request storage directly                      |
+| ☁️ **Integrates with cloud & on-prem** | Works with AWS, Azure, GCP, NFS, Ceph, etc.                  |
+| 🧰 **Supports multiple classes**       | Admins can define “fast”, “slow”, or “backup” StorageClasses |
+
+🔍 Useful Commands
+| Command                           | Description                    |
+| --------------------------------- | ------------------------------ |
+| `oc get storageclass`             | List available StorageClasses  |
+| `oc describe storageclass <name>` | See details of a StorageClass  |
+| `oc get pvc`                      | List PVCs and their bound PVs  |
+| `oc get pv`                       | See dynamically created PVs    |
+| `oc describe pvc <name>`          | Check which PV is bound to PVC |
+
+📊 Volume Binding Modes
+| Mode                     | Description                                                                                                                    |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| **Immediate**            | PV is provisioned as soon as PVC is created                                                                                    |
+| **WaitForFirstConsumer** | PV is provisioned only when a Pod using that PVC is scheduled (helps ensure the storage is in the same zone/region as the Pod) |
+
+🔐 Reclaim Policies
+| Policy      | Description                                                      |
+| ----------- | ---------------------------------------------------------------- |
+| **Retain**  | Keeps the data even after PVC is deleted (manual cleanup needed) |
+| **Delete**  | Deletes both PV and data when PVC is deleted                     |
+| **Recycle** | Old method (deprecated) – clears data and reuses volume          |
+
+🧩 Supported Dynamic Provisioners in OpenShift
+| Provisioner                          | Backend Type                          |
+| ------------------------------------ | ------------------------------------- |
+| `kubernetes.io/aws-ebs`              | AWS Elastic Block Store               |
+| `kubernetes.io/gce-pd`               | Google Persistent Disk                |
+| `kubernetes.io/azure-disk`           | Azure Disk                            |
+| `kubernetes.io/nfs`                  | NFS Server                            |
+| `kubernetes.io/rbd`                  | Ceph RBD                              |
+| `kubernetes.io/glusterfs`            | GlusterFS                             |
+| `kubernetes.io/hostpath`             | Local Node Storage (testing only)     |
+| `openshift-storage.rbd.csi.ceph.com` | Red Hat Ceph Storage (via CSI driver) |
+| `kubernetes.io/vsphere-volume`       | VMware vSphere                        |
+
+🧰 Dynamic Provisioning via CSI (Container Storage Interface)
+Modern OpenShift versions use CSI drivers for dynamic provisioning.
+Examples:
+Ceph CSI
+OpenShift Data Foundation (ODF)
+AWS EBS CSI
+Azure File CSI
+vSphere CSI
+CSI-based provisioning is recommended and fully supported in OpenShift 4.x and later.
+
+🧠 In Short
+| Component        | Responsibility                          |
+| ---------------- | --------------------------------------- |
+| **StorageClass** | Defines *how* storage should be created |
+| **PVC**          | Requests storage dynamically            |
+| **Provisioner**  | Creates PV automatically                |
+| **PV**           | Represents the actual storage created   |
+
+✅ Final Summary
+| Step | Action                           | Component             |
+| ---- | -------------------------------- | --------------------- |
+| 1    | Admin defines StorageClass       | StorageClass          |
+| 2    | Developer creates PVC            | PersistentVolumeClaim |
+| 3    | OpenShift dynamically creates PV | PersistentVolume      |
+| 4    | Pod uses PVC to access storage   | Pod                   |
+
