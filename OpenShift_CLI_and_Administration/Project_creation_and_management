@@ -1,0 +1,92 @@
+🧱 What is a Project in OpenShift
+In OpenShift, a Project = a Kubernetes Namespace + additional OpenShift metadata (like resource quotas, role bindings, etc.).
+Each project isolates workloads and defines who can access what.
+
+🧰 Project Creation and Management Commands
+
+🔹 1. Create a new project
+oc new-project <project-name>
+
+Example:
+oc new-project demo-app
+
+Output:
+Now using project "demo-app" on server "https://api.ocp.example.com:6443".
+You can add applications to this project with the 'new-app' command.
+
+What happens:
+Creates a new namespace.
+Sets it as the current working project.
+Adds default service accounts and roles (e.g., builder, deployer, default).
+
+🔹 2. List all projects
+oc get projects
+
+Example Output:
+NAME             DISPLAY NAME   STATUS
+default                         Active
+kube-system                     Active
+demo-app                        Active
+monitoring                      Active
+
+🔹 3. Switch to another project
+oc project <project-name>
+
+Example:
+oc project monitoring
+
+Output:
+Now using project "monitoring" on server "https://api.ocp.example.com:6443".
+
+🔹 4. Describe a project
+oc describe project <project-name>
+
+Example:
+oc describe project demo-app
+
+Output:
+Name:           demo-app
+Display Name:
+Status:         Active
+Annotations:    openshift.io/description=
+                openshift.io/display-name=
+Created:        3 minutes ago
+
+🔹 5. Delete a project
+oc delete project <project-name>
+
+Example:
+oc delete project demo-app
+
+Output:
+project.project.openshift.io "demo-app" deleted
+
+🔹 6. View the current active project
+oc project
+
+Output:
+Using project "monitoring" on server "https://api.ocp.example.com:6443".
+🧑‍💼 Administrator-Level Project Management
+
+Administrators can:
+Set resource quotas for a project.
+Assign role-based access control (RBAC).
+Define network policies between projects.
+Configure limit ranges and default storage classes.
+
+Example: View quotas
+oc get quota -n demo-app
+
+Example: View role bindings
+oc get rolebindings -n demo-app
+
+📘 Summary Table
+| Task                 | Command                      | Description                          |
+| -------------------- | ---------------------------- | ------------------------------------ |
+| Create project       | `oc new-project <name>`      | Create and switch to a new project   |
+| List projects        | `oc get projects`            | Show all projects                    |
+| Switch project       | `oc project <name>`          | Change current working project       |
+| Describe project     | `oc describe project <name>` | Show detailed info                   |
+| Delete project       | `oc delete project <name>`   | Remove project and all its resources |
+| View current project | `oc project`                 | Display current project context      |
+

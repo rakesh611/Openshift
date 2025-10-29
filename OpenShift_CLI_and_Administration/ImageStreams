@@ -1,0 +1,133 @@
+🧱 1. ImageStreams in OpenShift
+🔹 What is an ImageStream?
+An ImageStream is an OpenShift object that tracks container images and their versions (tags).
+It provides a consistent way to reference, trigger, and update images used in builds and deployments.
+
+Think of an ImageStream as:
+“A smart pointer to container images — managed, tagged, and updated automatically.”
+
+🔹 Why use ImageStreams?
+To track new image versions and trigger automatic builds or deployments.
+To abstract image locations — you don’t need to hardcode Docker image URLs.
+To share images between projects inside OpenShift.
+To integrate CI/CD pipelines with image change triggers.
+
+🔹 Example: Create an ImageStream
+oc create imagestream myapp
+
+YAML Example:
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: myapp
+spec:
+  tags:
+  - name: latest
+    from:
+      kind: DockerImage
+      name: quay.io/myrepo/myapp:latest
+This tells OpenShift to track the external Docker image from Quay.io and store it internally as an ImageStream tag.
+
+🔹 View and Describe ImageStream
+oc get imagestreams
+oc describe imagestream myapp
+
+Output Example:
+Name:           myapp
+Namespace:      demo
+Tags:           latest
+From:           DockerImage quay.io/myrepo/myapp:latest
+
+🔹 How ImageStreams Trigger Updates
+When a new image version is detected (e.g., a new tag pushed to Quay.io), OpenShift can automatically trigger:
+A BuildConfig rebuild
+A DeploymentConfig redeploy
+This automation is the backbone of OpenShift CI/CD.
+
+🧩 2. Builds in OpenShift
+🔹 What is a Build?
+A Build in OpenShift is the process of creating a container image from source code, binaries, or other inputs — then storing it in an ImageStream.
+A build is defined by a BuildConfig (BC) object.
+
+🔹 Build Process Flow
+Source Code → BuildConfig → Build → ImageStream → DeploymentConfig
+
+🔹 Types of Builds in OpenShift
+| Build Strategy            | Description                                                        |
+| ------------------------- | ------------------------------------------------------------------ |
+| **Source-to-Image (S2I)** | Builds from source code + builder image (e.g., Node.js, Python).   |
+| **Docker Strategy**       | Uses a `Dockerfile` directly to build a custom image.              |
+| **Custom Strategy**       | Uses a user-defined builder image for special build logic.         |
+| **Pipeline Strategy**     | Uses a Jenkins pipeline (BuildConfig with type `JenkinsPipeline`). |
+
+🔹 Example: Source-to-Image (S2I) Build
+oc new-build quay.io/centos7/nodejs-14~https://github.com/user/nodejs-app.git --name=myapp
+
+This will:
+Create a BuildConfig named myapp
+Create an ImageStream for myapp
+Run a build using the Node.js base image + Git repo source
+Store the built image in the internal registry
+
+🔹 View Builds and Status
+oc get builds
+oc describe build myapp-1
+oc logs build/myapp-1
+
+🔹 Start a Manual Build
+oc start-build myapp --follow
+
+🔹 Example BuildConfig YAML
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: myapp
+spec:
+  source:
+    type: Git
+    git:
+      uri: https://github.com/user/nodejs-app.git
+  strategy:
+    type: Source
+    sourceStrategy:
+      from:
+        kind: ImageStreamTag
+        name: nodejs:14
+  output:
+    to:
+      kind: ImageStreamTag
+      name: myapp:latest
+  triggers:
+  - type: ConfigChange
+  - type: ImageChange
+
+This build will:
+Clone the Git repo
+Build with Node.js 14 builder image
+Push the result to the myapp:latest ImageStream
+Automatically trigger when the builder image or source code changes
+
+🔹 View Build Logs
+oc logs -f build/myapp-1
+
+⚙️ 3. Integration Between ImageStreams & Builds
+BuildConfig outputs go into an ImageStream.
+DeploymentConfig inputs come from an ImageStream.
+Triggers can connect them for full automation:
+
+🧩 Build → ImageStream update → Deployment trigger
+🔁 Example Trigger Flow
+Developer pushes new code → oc start-build runs
+Build produces a new image → ImageStream myapp:latest updated
+DeploymentConfig notices new tag → new Pod rollout starts automatically
+
+🧾 Summary Table
+| Concept           | Purpose                                               | Example Command                  |
+| ----------------- | ----------------------------------------------------- | -------------------------------- |
+| **ImageStream**   | Tracks image versions and triggers builds/deployments | `oc get is`                      |
+| **BuildConfig**   | Defines how to build images from source               | `oc get bc`                      |
+| **Build**         | The actual build run instance                         | `oc get builds`                  |
+| **S2I Build**     | Build from source + builder image                     | `oc new-build`                   |
+| **Docker Build**  | Build from Dockerfile                                 | `oc new-build --strategy=docker` |
+| **Trigger Build** | Start a manual build                                  | `oc start-build <name>`          |
+

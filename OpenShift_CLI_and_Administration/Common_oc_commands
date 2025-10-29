@@ -1,0 +1,125 @@
+🧠 What is oc Command?
+The oc command is the OpenShift CLI tool used to interact with your OpenShift cluster.
+It allows you to manage, deploy, inspect, and troubleshoot resources in your OpenShift projects (namespaces).
+
+⚙️ Basic Syntax
+oc <command> <resource> [name] [options]
+For example:
+oc get pods
+oc describe pod myapp-pod
+
+🧩 1️⃣ oc get
+📘 Purpose:
+Used to list or view OpenShift resources.
+
+🧾 Syntax:
+oc get <resource> [name] [options]
+
+📍 Examples:
+oc get pods                  # List all pods in the current project
+oc get svc                   # List all services
+oc get deployments            # List all deployments
+oc get pvc                   # List PersistentVolumeClaims
+oc get pv                    # List PersistentVolumes
+oc get routes                # List Routes
+oc get nodes                 # List cluster nodes
+
+🔍 Useful Options:
+| Option                     | Description                         |
+| -------------------------- | ----------------------------------- |
+| `-o wide`                  | Shows extra info like node name, IP |
+| `-o yaml`                  | Show output in YAML format          |
+| `-o json`                  | Show output in JSON format          |
+| `-A` or `--all-namespaces` | Show across all projects            |
+
+Example:
+oc get pods -o wide
+oc get pods -A
+🧩 2️⃣ oc describe
+📘 Purpose:
+Shows detailed information about a specific resource (like events, configuration, conditions, etc.).
+
+🧾 Syntax:
+oc describe <resource> <name>
+
+📍 Examples:
+oc describe pod myapp-pod
+oc describe svc myapp-service
+oc describe pvc myapp-pvc
+oc describe deployment myapp-deploy
+oc describe node worker-node1
+
+💡 Use Case:
+Check pod events (why a pod failed or restarted)
+View mounted volumes
+Inspect network configurations
+Debug Pending PVCs or CrashLoopBackOff pods
+
+🧩 3️⃣ oc logs
+📘 Purpose:
+Displays the logs of a running or crashed pod (container logs).
+
+🧾 Syntax:
+oc logs <pod-name> [-c container-name] [options]
+
+📍 Examples:
+oc logs myapp-pod                    # Get logs of the pod’s main container
+oc logs myapp-pod -c backend         # Get logs of a specific container
+oc logs -f myapp-pod                 # Follow (live stream) pod logs
+💡 Use Case:
+Debug container errors
+View application output
+Monitor logs in real time (-f = follow)
+
+🧩 4️⃣ oc rsh
+📘 Purpose:
+Start an interactive shell session inside a running pod.
+Similar to ssh but for pods.
+
+🧾 Syntax:
+oc rsh <pod-name>
+
+📍 Examples:
+oc rsh myapp-pod
+oc rsh -c backend myapp-pod
+
+💡 Use Case:
+Inspect environment inside a container
+Run commands like ls, cat, df -h, env, etc.
+Check configuration files or logs stored inside the container
+
+Example inside container:
+oc rsh myapp-pod
+sh-4.4# ls /usr/share/nginx/html
+
+🧩 5️⃣ oc exec
+📘 Purpose:
+Execute a single command directly inside a running container (without opening an interactive shell).
+🧾 Syntax:
+oc exec <pod-name> -- <command>
+
+📍 Examples:
+oc exec myapp-pod -- ls /app
+oc exec myapp-pod -- cat /etc/hostname
+oc exec myapp-pod -c backend -- env
+oc exec -it myapp-pod -- bash        # Start interactive shell
+
+💡 Use Case:
+Run diagnostic commands inside container
+Check configuration files, permissions, or environment variables
+Verify running processes
+
+🧰 Bonus: Other Useful oc Commands
+| Command                                | Description                                                  |
+| -------------------------------------- | ------------------------------------------------------------ |
+| `oc project`                           | Switch between OpenShift projects                            |
+| `oc whoami`                            | Show current user info                                       |
+| `oc login`                             | Authenticate to OpenShift cluster                            |
+| `oc new-project <name>`                | Create a new project                                         |
+| `oc delete <resource> <name>`          | Delete a resource                                            |
+| `oc rollout restart deployment/<name>` | Restart deployment                                           |
+| `oc get events`                        | List recent cluster events                                   |
+| `oc port-forward <pod> 8080:80`        | Access pod port locally                                      |
+| `oc cp <pod>:/path /localpath`         | Copy files from pod to local machine                         |
+| `oc adm`                               | Administrative commands (e.g., diagnostics, node operations) |
+
