@@ -1,0 +1,146 @@
+🧱 What is a Persistent Volume (PV)?
+In OpenShift (and Kubernetes), a Persistent Volume (PV) is a piece of storage in the cluster that has been provisioned by an administrator or dynamically created using a StorageClass.
+It provides a way for pods to store data permanently, even if the pod or container is deleted or rescheduled.
+
+👉 In short:
+Pods are temporary, but Persistent Volumes store data permanently across pod restarts and deployments.
+
+🗂 Why We Need PVs
+By default, any data a container writes inside its filesystem is lost when the pod stops or is deleted.
+To keep important data (like databases, logs, or uploaded files), OpenShift provides Persistent Volumes.
+
+🧩 How Persistent Volumes Work
+Persistent Volumes work in combination with:
+PV (Persistent Volume): Actual physical storage in the cluster.
+PVC (Persistent Volume Claim): A user request for storage.
+StorageClass: Defines how storage is provisioned (manual or dynamic).
+
+⚙️ Flow of Persistent Storage
+Cluster Admin creates a PV or defines a StorageClass.
+Developer creates a PVC that requests specific storage (e.g., size and access mode).
+OpenShift matches the PVC with a suitable PV (if available) or dynamically provisions one.
+The pod uses the PVC to mount the volume and store data.
+
+🧾 Example YAML Files
+
+1️⃣ Persistent Volume (PV) Definition
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: my-pv
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  nfs:
+    path: /nfs/data
+    server: 192.168.122.10
+
+🔹 Explanation:
+storage: 5Gi → size of the volume
+accessModes → how it can be accessed
+ReadWriteOnce (RWO) → one node read/write
+ReadOnlyMany (ROX) → many nodes read-only
+ReadWriteMany (RWX) → many nodes read/write
+persistentVolumeReclaimPolicy → what happens when PVC is deleted
+Retain → keeps data
+Delete → deletes storage
+Recycle → clears data and reuses
+
+2️⃣ Persistent Volume Claim (PVC)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: my-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+
+🔹 Explanation:
+PVC requests storage that matches the PV specs.
+When bound, PVC and PV are linked.
+
+3️⃣ Pod Using the PVC
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-pod
+spec:
+  containers:
+  - name: my-container
+    image: nginx
+    volumeMounts:
+    - mountPath: /usr/share/nginx/html
+      name: web-storage
+  volumes:
+  - name: web-storage
+    persistentVolumeClaim:
+      claimName: my-pvc
+🔹 Explanation:
+
+Pod mounts /usr/share/nginx/html from the PV via PVC.
+
+🧠 Types of Storage in OpenShift
+OpenShift supports multiple backends for Persistent Volumes:
+NFS (Network File System)
+GlusterFS
+Ceph RBD / CephFS
+iSCSI
+EBS / EFS (AWS)
+Azure Disk / Azure File
+GCE Persistent Disk
+Local storage
+
+🧩 Dynamic Provisioning with StorageClass
+If you define a StorageClass, OpenShift can create PVs automatically when a PVC is requested.
+
+Example:
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: fast-storage
+provisioner: kubernetes.io/aws-ebs
+parameters:
+  type: gp2
+reclaimPolicy: Delete
+Then your PVC can reference it:
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: my-dynamic-pvc
+spec:
+  storageClassName: fast-storage
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+
+📊 Common Commands
+| Command                  | Description                       |
+| ------------------------ | --------------------------------- |
+| `oc get pv`              | List all Persistent Volumes       |
+| `oc get pvc`             | List all Persistent Volume Claims |
+| `oc describe pv <name>`  | Show PV details                   |
+| `oc describe pvc <name>` | Show PVC details                  |
+| `oc delete pv <name>`    | Delete a Persistent Volume        |
+
+🔐 PV Lifecycle
+| Phase         | Description                             |
+| ------------- | --------------------------------------- |
+| **Available** | PV is ready to be claimed               |
+| **Bound**     | PV is matched to a PVC                  |
+| **Released**  | PVC is deleted, PV waiting for reclaim  |
+| **Failed**    | PV failed to release resources properly |
+
+💡 Key Points to Remember
+PVs are cluster-scoped (not namespaced).
+PVCs are namespace-scoped (belong to a project).
+Data in PV persists even if pods are deleted.
+Use dynamic provisioning via StorageClass for automation.
+Set ReclaimPolicy carefully (to retain or delete data).
