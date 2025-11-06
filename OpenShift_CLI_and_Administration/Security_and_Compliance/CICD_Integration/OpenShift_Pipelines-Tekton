@@ -1,0 +1,287 @@
+🧩 What is OpenShift Pipelines?
+OpenShift Pipelines is Red Hat’s CI/CD solution based on Tekton, a Kubernetes-native framework for building CI/CD pipelines as Kubernetes resources.
+It allows you to build, test, and deploy applications across OpenShift — entirely inside the cluster — using Kubernetes-native CRDs.
+
+🔹 Key Concept:
+“Every CI/CD component (task, step, pipeline, resource) is a Kubernetes object.”
+So, unlike Jenkins which runs jobs in its own environment,
+Tekton runs pipelines natively inside Kubernetes pods.
+
+⚙️ Core Architecture
+| Component                | Description                                                                                 |
+| ------------------------ | ------------------------------------------------------------------------------------------- |
+| **Tekton Pipelines**     | Core engine for defining and running tasks/pipelines.                                       |
+| **Tekton Triggers**      | Automatically start pipelines when Git events occur.                                        |
+| **PipelineRun**          | A running instance of a pipeline.                                                           |
+| **TaskRun**              | A running instance of a task.                                                               |
+| **PipelineResources**    | Input/output data (e.g., Git repo, image). *(deprecated, replaced by workspaces & results)* |
+| **Workspaces**           | Shared storage between tasks.                                                               |
+| **Conditions / Results** | Logic and data sharing between steps.                                                       |
+
+🧱 Core Custom Resource Definitions (CRDs)
+| CRD                                                  | Description                                                     |
+| ---------------------------------------------------- | --------------------------------------------------------------- |
+| **Task**                                             | Defines a reusable unit of work (build, test, deploy).          |
+| **ClusterTask**                                      | Task available cluster-wide.                                    |
+| **Pipeline**                                         | Defines a sequence of Tasks.                                    |
+| **PipelineRun**                                      | Execution of a pipeline.                                        |
+| **TaskRun**                                          | Execution of a task.                                            |
+| **PipelineResource**                                 | Input/output resource (Git, image, etc.).                       |
+| **TriggerTemplate / TriggerBinding / EventListener** | Used to automate pipeline runs from Git events (CI/CD trigger). |
+
+🧠 Why Use Tekton in OpenShift?
+✅ Cloud-native — uses Kubernetes CRDs.
+✅ No dedicated CI/CD server like Jenkins needed.
+✅ Scalable and isolated — each step runs in a container.
+✅ Secure — uses OpenShift’s SCC, RBAC, and ServiceAccounts.
+✅ Integrates with GitHub, GitLab, Jenkins, Quay.io, Nexus, etc.
+✅ Operator-based — easy install and upgrade via OpenShift OperatorHub.
+
+🧰 Install OpenShift Pipelines Operator
+
+1️⃣ From CLI:
+oc apply -f https://operatorhub.io/install/openshift-pipelines-operator-rh.yaml
+
+2️⃣ From Console:
+Go to Operators → OperatorHub
+Search for OpenShift Pipelines
+Click Install
+It creates CRDs in namespace openshift-pipelines
+
+🧩 Tekton Core Concepts with Example
+🔹 1. Task
+A Task is a single job — e.g., build an image, run tests, deploy to cluster.
+
+Example:
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: build-image
+spec:
+  workspaces:
+    - name: source
+  params:
+    - name: IMAGE
+      type: string
+  steps:
+    - name: build
+      image: quay.io/buildah/stable
+      script: |
+        #!/bin/bash
+        buildah bud -t $(params.IMAGE) $(workspaces.source.path)
+
+🔹 2. Pipeline
+A Pipeline is a sequence of Tasks connected together.
+
+Example:
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: ci-pipeline
+spec:
+  params:
+    - name: IMAGE
+      type: string
+  workspaces:
+    - name: shared-data
+  tasks:
+    - name: build
+      taskRef:
+        name: build-image
+      params:
+        - name: IMAGE
+          value: $(params.IMAGE)
+      workspaces:
+        - name: source
+          workspace: shared-data
+    - name: deploy
+      runAfter:
+        - build
+      taskRef:
+        name: deploy-to-k8s
+      workspaces:
+        - name: source
+          workspace: shared-data
+
+🔹 3. PipelineRun
+This object triggers and runs the defined pipeline.
+
+Example:
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: ci-pipeline-run
+spec:
+  pipelineRef:
+    name: ci-pipeline
+  params:
+    - name: IMAGE
+      value: quay.io/myrepo/myapp:latest
+  workspaces:
+    - name: shared-data
+      persistentVolumeClaim:
+        claimName: pipeline-pvc
+  serviceAccountName: pipeline
+
+🔹 4. Workspaces
+Workspaces are shared volumes that all tasks can read/write from.
+
+Example PVC:
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pipeline-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+🔹 5. Triggers
+Triggers are used to automatically start pipelines when events occur (e.g., Git push, PR, etc.).
+Example Trigger Setup
+
+TriggerBinding (captures Git info):
+apiVersion: triggers.tekton.dev/v1alpha1
+kind: TriggerBinding
+metadata:
+  name: github-binding
+spec:
+  params:
+    - name: git-repo-url
+      value: $(body.repository.url)
+    - name: git-revision
+      value: $(body.head_commit.id)
+
+TriggerTemplate (creates PipelineRun):
+apiVersion: triggers.tekton.dev/v1alpha1
+kind: TriggerTemplate
+metadata:
+  name: github-template
+spec:
+  params:
+    - name: git-repo-url
+    - name: git-revision
+  resourcetemplates:
+    - apiVersion: tekton.dev/v1
+      kind: PipelineRun
+      metadata:
+        generateName: github-run-
+      spec:
+        pipelineRef:
+          name: ci-pipeline
+        params:
+          - name: IMAGE
+            value: quay.io/myrepo/myapp:$(params.git-revision)
+        workspaces:
+          - name: shared-data
+            persistentVolumeClaim:
+              claimName: pipeline-pvc
+
+EventListener (webhook endpoint):
+apiVersion: triggers.tekton.dev/v1alpha1
+kind: EventListener
+metadata:
+  name: github-listener
+spec:
+  serviceAccountName: pipeline
+  triggers:
+    - name: github-trigger
+      bindings:
+        - ref: github-binding
+      template:
+        ref: github-template
+
+After deployment, Tekton creates a service endpoint you can use in GitHub Webhook → so whenever code is pushed, the pipeline runs automatically.
+
+🧮 Visual Flow
+[ Git Push ]
+     ↓
+[ EventListener → TriggerBinding + TriggerTemplate ]
+     ↓
+[ PipelineRun ]
+     ↓
+[ Task 1: Build ] → [ Task 2: Test ] → [ Task 3: Deploy ]
+
+🧰 Common CLI Commands
+| Command                              | Description               |
+| ------------------------------------ | ------------------------- |
+| `tkn pipeline list`                  | List pipelines            |
+| `tkn pipelinerun list`               | List pipeline runs        |
+| `tkn pipelinerun logs <name>`        | View logs                 |
+| `tkn task list`                      | List tasks                |
+| `tkn taskrun list`                   | List task runs            |
+| `tkn pipeline start <pipeline-name>` | Start a pipeline manually |
+| `tkn version`                        | Show Tekton CLI version   |
+
+🧩 Integration with Other Tools
+| Tool                          | Integration                          |
+| ----------------------------- | ------------------------------------ |
+| **GitHub / GitLab**           | Webhook triggers via EventListener   |
+| **Quay.io / Nexus**           | Image build and push                 |
+| **OpenShift GitOps (ArgoCD)** | For CD after pipeline build          |
+| **Jenkins**                   | Can trigger Tekton pipelines via API |
+| **SonarQube / Trivy**         | Code and image scanning in tasks     |
+| **Ansible / Helm**            | Deployment automation tasks          |
+
+🧠 Security and Access Control
+Pipelines use ServiceAccounts to run (define RBAC permissions).
+Runs in OpenShift SCC (Security Context Constraints) environment.
+Can use Secrets for Git or Registry credentials.
+All resources (Tasks, Pipelines) are namespace-scoped.
+
+🔐 Example: Full CI/CD Flow
+Developer pushes code to GitHub.
+Webhook triggers Tekton EventListener.
+TriggerBinding + TriggerTemplate create a new PipelineRun.
+Tasks execute sequentially:
+Clone repo
+Build image using buildah
+Push image to Quay.io
+Deploy YAML to OpenShift
+Results visible in OpenShift Console → Pipelines tab.
+
+📊 View in OpenShift Console
+Navigate to: Developer → Pipelines
+You can:
+View pipeline graphs (tasks and dependencies)
+Watch logs in real-time
+Rerun failed pipelines
+See pipeline history
+Manage triggers and webhooks visually
+
+⚙️ Best Practices
+✅ Use ClusterTasks for reusable tasks (build, push, deploy).
+✅ Use Workspaces for shared state (source code, artifacts).
+✅ Use Secrets for credentials.
+✅ Keep pipelines idempotent (repeatable).
+✅ Integrate GitOps (ArgoCD) for final deployment phase.
+✅ Version-control all Tekton YAMLs in Git.
+
+✅ Summary Table
+| Feature                   | Description                                         |
+| ------------------------- | --------------------------------------------------- |
+| **Technology**            | Tekton (Kubernetes-native CI/CD)                    |
+| **Managed by**            | OpenShift Pipelines Operator                        |
+| **Core CRDs**             | Task, Pipeline, PipelineRun, TriggerTemplate, etc.  |
+| **Trigger Type**          | GitHub/GitLab Webhooks, manual `tkn pipeline start` |
+| **Execution Environment** | Kubernetes Pods                                     |
+| **Security**              | Runs under OpenShift RBAC and SCC                   |
+| **UI Integration**        | OpenShift Web Console Pipelines Tab                 |
+| **CLI**                   | `tkn` (Tekton CLI)                                  |
+
+🧩 Example Workflow Summary
+Developer → Git Push
+    ↓
+EventListener → Trigger
+    ↓
+PipelineRun
+    ↓
+Task 1: Git Clone
+Task 2: Build Image
+Task 3: Push to Quay
+Task 4: Deploy to OCP
+    ↓
+Status: ✅ Success / ❌ Failed
+
