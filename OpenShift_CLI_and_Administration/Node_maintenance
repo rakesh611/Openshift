@@ -1,0 +1,127 @@
+⚙️ What is Node Maintenance in OpenShift?
+Node maintenance means temporarily removing a node from the OpenShift scheduler so that no new pods are scheduled on it, and existing workloads are safely evicted or rescheduled on other healthy nodes.
+
+You use three main commands:
+oc adm cordon
+oc adm drain
+oc adm uncordon
+
+🧩 1. oc adm cordon
+🧠 Purpose:
+Marks a node as unschedulable, meaning no new pods will be scheduled on it, but existing pods keep running.
+
+🧾 Syntax:
+oc adm cordon <node-name>
+
+🧪 Example:
+oc adm cordon worker-node1
+
+🧩 Output:
+node/worker-node1 cordoned
+
+📊 Check Status:
+oc get nodes
+You’ll see:
+NAME            STATUS                     ROLES    AGE   VERSION
+worker-node1    Ready,SchedulingDisabled   worker   50d   v1.28.4
+
+🟡 SchedulingDisabled means cordoned.
+
+🧰 When to Use:
+Before planned maintenance or upgrade
+To stop new workloads from being placed on the node
+
+🧩 2. oc adm drain
+🧠 Purpose:
+Safely evicts all pods from the node and prepares it for maintenance (e.g., reboot, update, hardware fix).
+It will reschedule pods to other nodes (if possible).
+
+🧾 Syntax:
+oc adm drain <node-name> --ignore-daemonsets --force
+
+⚙️ Common Flags:
+| Flag                       | Meaning                                                                         |
+| -------------------------- | ------------------------------------------------------------------------------- |
+| `--ignore-daemonsets`      | DaemonSet-managed pods (like logging, monitoring) are ignored and left running. |
+| `--force`                  | Forces deletion of certain pods not backed by a replication controller.         |
+| `--delete-emptydir-data`   | Deletes local data in emptyDir volumes. Use carefully.                          |
+| `--grace-period=<seconds>` | Time to gracefully stop pods.                                                   |
+
+🧪 Example:
+oc adm drain worker-node1 --ignore-daemonsets --force --delete-emptydir-data
+
+🧩 Output:
+node/worker-node1 already cordoned
+evicting pod "nginx-abc123"
+evicting pod "mysql-xyz456"
+node/worker-node1 drained
+✅ Now the node is empty (no workloads) and safe for maintenance.
+
+🧠 Important Notes:
+Drain will skip system-critical pods (like openshift-* DaemonSets).
+Always ensure other nodes have enough capacity to take over pods.
+Use PodDisruptionBudgets (PDBs) to control eviction behavior.
+
+🧩 3. Perform Maintenance
+Now you can safely perform operations such as:
+Reboot node
+Upgrade kernel or OS
+Apply security patches
+Restart kubelet or CRI-O services
+For RHCOS (Red Hat CoreOS) nodes, this is often managed automatically by Machine Config Operator (MCO), but manual draining is still useful.
+
+🧩 4. oc adm uncordon
+🧠 Purpose:
+Marks the node as schedulable again, allowing new pods to be scheduled on it.
+
+🧾 Syntax:
+oc adm uncordon <node-name>
+
+🧪 Example:
+oc adm uncordon worker-node1
+
+🧩 Output:
+node/worker-node1 uncordoned
+
+📊 Verify:
+oc get nodes
+Now the node’s status will be:
+worker-node1   Ready   worker   50d   v1.28.4
+🟢 Node is now back to normal scheduling.
+
+🔁 Typical Maintenance Workflow
+| Step | Command                                           | Description                            |
+| ---- | ------------------------------------------------- | -------------------------------------- |
+| 1️⃣  | `oc get nodes`                                    | Identify the node you need to maintain |
+| 2️⃣  | `oc adm cordon <node>`                            | Stop scheduling new pods               |
+| 3️⃣  | `oc adm drain <node> --ignore-daemonsets --force` | Evict running pods                     |
+| 4️⃣  | (SSH / Maintenance)                               | Reboot, upgrade, patch                 |
+| 5️⃣  | `oc adm uncordon <node>`                          | Bring node back to cluster             |
+
+🧰 Example Scenario
+You plan to update kernel on worker-node1:
+oc get nodes
+oc adm cordon worker-node1
+oc adm drain worker-node1 --ignore-daemonsets --force
+ssh core@worker-node1
+sudo rpm-ostree upgrade && sudo reboot
+
+# After reboot:
+oc get nodes
+oc adm uncordon worker-node1
+
+⚠️ Troubleshooting Tips
+| Issue                                 | Cause                                  | Solution                                                     |
+| ------------------------------------- | -------------------------------------- | ------------------------------------------------------------ |
+| Drain fails due to PDB                | PodDisruptionBudget restricts eviction | Adjust PDB or use `--disable-eviction`                       |
+| Some pods stuck terminating           | Misbehaving containers or volumes      | Use `--grace-period=0 --force`                               |
+| Node doesn’t return after maintenance | Kubelet or CRI-O issue                 | Use `oc debug node/<node>` and check `journalctl -u kubelet` |
+| Machine auto-reboots during drain     | MCO performing updates                 | Pause MCO or coordinate with it before manual action         |
+
+🧩 Summary Table
+| Command           | Purpose              | Effect                        |
+| ----------------- | -------------------- | ----------------------------- |
+| `oc adm cordon`   | Disable scheduling   | No new pods scheduled         |
+| `oc adm drain`    | Evict pods           | Prepares node for maintenance |
+| `oc adm uncordon` | Re-enable scheduling | Node becomes available again  |
+
