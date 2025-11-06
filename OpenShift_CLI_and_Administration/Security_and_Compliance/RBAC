@@ -1,0 +1,188 @@
+🔐 What is RBAC in OpenShift?
+RBAC (Role-Based Access Control) is the authorization system in OpenShift and Kubernetes that controls who can do what within the cluster.
+It defines permissions (roles) and assigns them to users, groups, or service accounts through bindings.
+
+🧠 In Simple Terms
+RBAC = “Who (Subject)” + “What (Role)” + “Where (Namespace or Cluster)”
+
+For example:
+The ServiceAccount jenkins can create pods in the dev project.
+
+🧩 1. RBAC Core Components
+OpenShift RBAC revolves around 4 key objects:
+| RBAC Object            | Scope        | Purpose                                                                         |
+| ---------------------- | ------------ | ------------------------------------------------------------------------------- |
+| **Role**               | Namespaced   | Defines a set of permissions (verbs + resources) within a specific namespace    |
+| **ClusterRole**        | Cluster-wide | Defines permissions that apply across all namespaces or cluster-level resources |
+| **RoleBinding**        | Namespaced   | Assigns a Role to a user/group/ServiceAccount **within one namespace**          |
+| **ClusterRoleBinding** | Cluster-wide | Assigns a ClusterRole to a user/group/ServiceAccount **across the cluster**     |
+
+🧩 2. RBAC Building Blocks
+Each RBAC policy consists of:
+| Component     | Description             | Example                                          |
+| ------------- | ----------------------- | ------------------------------------------------ |
+| **API Group** | Defines resource family | `""` (core), `apps`, `rbac.authorization.k8s.io` |
+| **Resource**  | Object type             | `pods`, `deployments`, `configmaps`              |
+| **Verb**      | Action allowed          | `get`, `list`, `create`, `delete`, `update`      |
+
+📘 Example RBAC Rule
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+
+This means:
+✅ Can view pods
+❌ Cannot create, delete, or modify pods.
+
+🧩 3. Role (Namespace Scoped)
+A Role is used to define permissions inside a single project (namespace).
+
+🧾 Example: Create Role to read Pods
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: dev
+  name: pod-reader
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+
+Apply:
+oc apply -f pod-reader-role.yaml
+
+🧩 4. RoleBinding (Namespace Scoped)
+A RoleBinding assigns a Role to a user, group, or ServiceAccount within the same namespace.
+
+🧾 Example: Bind pod-reader Role to myapp-sa
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: read-pods-binding
+  namespace: dev
+subjects:
+- kind: ServiceAccount
+  name: myapp-sa
+  namespace: dev
+roleRef:
+  kind: Role
+  name: pod-reader
+  apiGroup: rbac.authorization.k8s.io
+
+Apply:
+oc apply -f rolebinding.yaml
+✅ Now, myapp-sa can view pods in the dev namespace only.
+
+🧩 5. ClusterRole (Cluster Scoped)
+A ClusterRole is used for cluster-wide resources (like nodes, persistentvolumes)
+or when you want the same permissions across multiple namespaces.
+
+🧾 Example: ClusterRole to read Pods cluster-wide
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cluster-pod-reader
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+
+🧩 6. ClusterRoleBinding (Cluster Scoped)
+A ClusterRoleBinding grants a ClusterRole to a subject across all namespaces.
+
+🧾 Example:
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cluster-read-pods-binding
+subjects:
+- kind: ServiceAccount
+  name: myapp-sa
+  namespace: dev
+roleRef:
+  kind: ClusterRole
+  name: cluster-pod-reader
+  apiGroup: rbac.authorization.k8s.io
+✅ Now, myapp-sa can view pods in all namespaces.
+
+🧩 7. Built-in ClusterRoles in OpenShift
+OpenShift provides many predefined ClusterRoles you can reuse.
+| Role                   | Description                           |
+| ---------------------- | ------------------------------------- |
+| `cluster-admin`        | Full control of cluster               |
+| `admin`                | Full control within a namespace       |
+| `edit`                 | Can modify most objects, but not RBAC |
+| `view`                 | Read-only access to most objects      |
+| `basic-user`           | Can list projects and view basic info |
+| `system:image-puller`  | Can pull images from image streams    |
+| `system:image-builder` | Can push images to image streams      |
+
+Example: Grant a user admin role in a project
+oc adm policy add-role-to-user admin alice -n dev
+
+This is equivalent to creating a RoleBinding linking admin to user alice in the dev namespace.
+
+🧩 8. Testing RBAC Permissions
+Use the oc auth can-i command to check what a user or SA can do.
+
+Examples:
+
+# Check your current user's permission
+oc auth can-i create pods
+
+# Check a ServiceAccount permission
+oc auth can-i delete pods --as system:serviceaccount:dev:myapp-sa -n dev
+Output:
+yes
+or
+no
+
+🧩 9. Viewing Existing Roles and Bindings
+
+View Roles
+oc get roles -n dev
+
+View ClusterRoles
+oc get clusterroles
+
+View Bindings
+oc get rolebindings -n dev
+oc get clusterrolebindings
+
+Describe for Details
+oc describe rolebinding read-pods-binding -n dev
+
+🧩 10. Real-World Use Cases
+| Scenario                                   | Object Type                      | Example                           |
+| ------------------------------------------ | -------------------------------- | --------------------------------- |
+| Developer should only view pods in `dev`   | Role + RoleBinding               | Create a read-only role           |
+| Jenkins pipeline should deploy apps        | SA + RoleBinding                 | Bind edit/admin to Jenkins SA     |
+| Prometheus needs to monitor all namespaces | ClusterRole + ClusterRoleBinding | Grant list/watch to Prometheus SA |
+| Admin user needs full control              | ClusterRoleBinding               | Bind `cluster-admin` to user      |
+
+🧩 11. RBAC Hierarchy in OpenShift
+Cluster
+│
+├── ClusterRoles (global permissions)
+│   └── ClusterRoleBindings (global assignments)
+│
+└── Namespaces
+     ├── Roles (namespace-level permissions)
+     └── RoleBindings (namespace assignments)
+
+🧩 12. Summary Table
+| Component              | Scope     | Defines                      | Assigned via       | Example Command                |
+| ---------------------- | --------- | ---------------------------- | ------------------ | ------------------------------ |
+| **Role**               | Namespace | Permissions within namespace | RoleBinding        | `oc create role`               |
+| **ClusterRole**        | Cluster   | Global permissions           | ClusterRoleBinding | `oc create clusterrole`        |
+| **RoleBinding**        | Namespace | Assigns Role                 | —                  | `oc create rolebinding`        |
+| **ClusterRoleBinding** | Cluster   | Assigns ClusterRole          | —                  | `oc create clusterrolebinding` |
+
+🧠 In Summary:
+RBAC = Authorization System in OpenShift that maps Users/ServiceAccounts to Roles/ClusterRoles through Bindings.
+It gives fine-grained, least-privilege access control and is the backbone of OpenShift security.
