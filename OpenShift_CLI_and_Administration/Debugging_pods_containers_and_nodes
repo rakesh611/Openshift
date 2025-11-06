@@ -1,0 +1,153 @@
+🧩 1. Debugging Pods in OpenShift
+Pods are the smallest deployable units in OpenShift. When a pod fails or behaves unexpectedly, you can debug it using oc commands.
+
+🔍 Check Pod Status
+oc get pods -n <project>
+
+Shows the status (Running, CrashLoopBackOff, Pending, etc.)
+🧠 Describe Pod
+oc describe pod <pod-name> -n <project>
+
+This gives detailed info including:
+Node scheduling details
+Events (e.g., image pull errors, scheduling issues)
+Container states (waiting, running, terminated)
+Exit codes and restart counts
+
+Example error:
+Back-off pulling image "myapp:latest"
+→ Indicates image pull issue (check imageStream or image registry credentials).
+
+📜 View Pod Logs
+
+To check container logs:
+oc logs <pod-name> -n <project>
+
+If a pod has multiple containers:
+oc logs <pod-name> -c <container-name> -n <project>
+
+For previous container logs (after restart):
+oc logs -p <pod-name> -c <container-name> -n <project>
+
+🧰 Execute Commands in a Running Pod
+oc exec -it <pod-name> -n <project> -- /bin/bash
+
+Use this for:
+Checking file structure
+Validating configuration
+Testing connectivity (ping, curl, dig, etc.)
+
+🧩 Port Forward to Access Application
+If service or route isn’t available:
+oc port-forward <pod-name> 8080:80 -n <project>
+Access app locally on localhost:8080.
+
+🧪 Debug Pod (Ephemeral Container)
+If a pod keeps crashing and you can’t exec into it:
+oc debug pod/<pod-name> -n <project>
+
+This creates a new temporary pod with your original container’s filesystem mounted.
+Example:
+oc debug pod/myapp-6fd7b9b8d8-xyz
+Use it to inspect files, environment, or network.
+
+🧱 2. Debugging Containers
+Containers are part of pods. Issues can come from:
+Wrong image
+Application error
+Missing environment variables
+Network or volume mount failures
+
+🧾 Check Container Image
+oc describe pod <pod-name> | grep -A5 "Containers:"
+
+Check:
+Image name
+ImagePullPolicy
+Environment variables
+
+🧰 Run a Debug Container Manually
+oc run debug --image=registry.access.redhat.com/ubi8/ubi -- sleep infinity
+oc rsh debug
+
+Then test network access or connectivity from inside cluster.
+🧮 Check Resource Usage (CPU, Memory)
+
+If a container is being OOMKilled or throttled:
+oc describe pod <pod-name>
+
+Look for:
+State: Terminated (OOMKilled)
+
+Check resource requests/limits in the YAML:
+oc get pod <pod-name> -o yaml
+
+🖥️ 3. Debugging Nodes in OpenShift
+When an entire node misbehaves (e.g., scheduling failures, NotReady state), use oc admin commands.
+
+🧭 Check Node Status
+oc get nodes
+Look for NotReady, SchedulingDisabled, etc.
+
+🔍 Describe Node
+oc describe node <node-name>
+
+Shows:
+Kubelet status
+Resource allocation
+Conditions (e.g., DiskPressure, MemoryPressure, NetworkUnavailable)
+
+🛠️ SSH into Node
+
+If node is accessible:
+ssh core@<node-ip>   # For CoreOS-based nodes
+
+Then check:
+Systemd services:
+systemctl status kubelet
+
+Logs:
+journalctl -u kubelet
+journalctl -u crio
+
+🚧 Drain / Cordon a Node
+
+To isolate a faulty node:
+oc adm cordon <node-name>      # Mark node unschedulable
+oc adm drain <node-name> --ignore-daemonsets --force
+
+After fixing, make it schedulable again:
+oc adm uncordon <node-name>
+
+🧰 Node Debug Session
+If you need to inspect the node filesystem:
+oc debug node/<node-name>
+This launches a debug pod running on the node with host filesystem mounted at /host.
+
+Example:
+chroot /host
+journalctl -u crio
+
+🔄 Restart Node Services
+
+Inside debug shell:
+systemctl restart crio
+systemctl restart kubelet
+
+🧩 4. Common Debug Scenarios
+| Problem                   | Possible Cause                                 | How to Debug                                             |
+| ------------------------- | ---------------------------------------------- | -------------------------------------------------------- |
+| Pod stuck in `Pending`    | No available node resources / scheduling issue | `oc describe pod`, check `oc get nodes`                  |
+| Pod in `CrashLoopBackOff` | App crash, bad config, wrong env var           | `oc logs`, `oc exec`, check configMap/secret             |
+| Image pull error          | Image registry or secret issue                 | `oc describe pod`, verify `imagePullSecret`              |
+| Node `NotReady`           | Network / kubelet / disk issue                 | `oc describe node`, `oc debug node/<node>`               |
+| Network not reachable     | CNI or SDN issue                               | Test with `oc rsh` or `oc debug` and use `ping` / `curl` |
+| Volume mount failed       | PV/PVC mismatch                                | `oc describe pvc`, `oc describe pod`                     |
+
+📚 Summary
+| Level     | Command                              | Purpose                    |
+| --------- | ------------------------------------ | -------------------------- |
+| Pod       | `oc get/describe/logs/exec/debug`    | Debug applications         |
+| Container | `oc exec`, `oc logs`, `oc run debug` | Inspect running containers |
+| Node      | `oc get/describe/debug node`, SSH    | Debug infrastructure       |
+
