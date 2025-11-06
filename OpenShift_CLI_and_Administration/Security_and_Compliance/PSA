@@ -1,0 +1,170 @@
+🧩 What is Pod Security Admission (PSA) in OpenShift?
+Pod Security Admission (PSA) is a Kubernetes built-in admission controller that enforces security standards on Pods — based on predefined profiles (privileged, baseline, and restricted).
+
+In short:
+PSA checks whether a Pod’s security settings meet defined standards before allowing it to run.
+It acts as a policy gatekeeper, ensuring all workloads follow consistent security rules.
+
+⚙️ Why PSA in OpenShift?
+Previously, OpenShift used SCCs (Security Context Constraints) — a Red Hat–specific mechanism.
+However, Kubernetes itself introduced Pod Security Admission as a standard replacement for PodSecurityPolicy (PSP) (which was deprecated in Kubernetes 1.25).
+
+👉 OpenShift now supports both SCC and PSA for compatibility, but PSA is Kubernetes-native, while SCC remains OpenShift-specific.
+
+🧱 PSA Levels (Security Profiles)
+PSA provides three security levels based on Pod Security Standards (PSS).
+| Level          | Description                                                 | Use Case                                          |
+| -------------- | ----------------------------------------------------------- | ------------------------------------------------- |
+| **privileged** | No restrictions; full host access.                          | System components, CNI plugins, monitoring agents |
+| **baseline**   | Minimally restricted; prevents known privilege escalations. | Legacy apps that need some elevated rights        |
+| **restricted** | Strongly restricted; enforces least privilege.              | Normal apps and user workloads                    |
+🔹 1. Privileged
+Allows host networking, host PID, host IPC.
+Allows privileged containers and all capabilities.
+Used by system-critical components.
+
+🔹 2. Baseline
+Disallows privileged containers.
+Disallows host networking and hostPath volumes.
+Allows minimal necessary capabilities (e.g., NET_BIND_SERVICE).
+Blocks privilege escalation.
+
+🔹 3. Restricted
+Strongest policy.
+Containers must run as non-root.
+Read-only root filesystem recommended.
+Strict SELinux and seccomp settings enforced.
+No hostPath volumes.
+
+🧠 How PSA Works
+When a Pod is created or updated, PSA:
+Reads the labels on the namespace.
+Determines which policy level applies (privileged, baseline, or restricted).
+Checks the Pod’s security context.
+Allows, warns, or denies based on compliance.
+
+🏷️ Namespace Labels (PSA Configuration)
+PSA is enabled per namespace using labels.
+
+You can configure three actions for each level:
+| Action    | Description                         |
+| --------- | ----------------------------------- |
+| `enforce` | Reject pods that violate the policy |
+| `warn`    | Allow but log a warning             |
+| `audit`   | Allow but record an audit event     |
+
+🔹 Example: Enforce “restricted” policy in a namespace
+oc label namespace dev \
+pod-security.kubernetes.io/enforce=restricted \
+pod-security.kubernetes.io/enforce-version=latest
+Now, any Pod created in the dev namespace must comply with the restricted profile — otherwise, it will be denied.
+
+🔹 Example: Only warn and audit violations
+oc label namespace dev \
+pod-security.kubernetes.io/warn=baseline \
+pod-security.kubernetes.io/audit=restricted \
+pod-security.kubernetes.io/enforce-version=latest
+Violations of the baseline profile → show warnings.
+Violations of the restricted profile → logged in audit logs.
+Pod creation is still allowed.
+
+🔎 View PSA Labels on a Namespace
+oc get ns dev --show-labels
+
+Example output:
+NAME   STATUS   AGE   LABELS
+dev    Active   4d    pod-security.kubernetes.io/enforce=restricted,pod-security.kubernetes.io/enforce-version=latest
+
+⚠️ Example: Pod Blocked by PSA
+
+Let’s create a Pod that violates the restricted policy:
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-pod
+spec:
+  containers:
+  - name: test
+    image: busybox
+    command: ["sleep", "3600"]
+    securityContext:
+      runAsUser: 0  # runs as root
+
+When you apply this:
+oc apply -f test-pod.yaml
+
+Output:
+Error from server (Forbidden): pod "test-pod" is forbidden: violates PodSecurity "restricted:latest": runAsNonRoot != true
+✅ This shows PSA is blocking root containers in a restricted namespace.
+
+🧩 PSA Enforcement Summary
+| Label                                        | Description                              |
+| -------------------------------------------- | ---------------------------------------- |
+| `pod-security.kubernetes.io/enforce`         | Deny noncompliant Pods                   |
+| `pod-security.kubernetes.io/warn`            | Log warning for violations               |
+| `pod-security.kubernetes.io/audit`           | Add violations to audit logs             |
+| `pod-security.kubernetes.io/enforce-version` | Define version (e.g., `latest`, `v1.26`) |
+
+⚙️ PSA vs SCC (Comparison)
+| Feature                | SCC (Security Context Constraints) | PSA (Pod Security Admission)             |
+| ---------------------- | ---------------------------------- | ---------------------------------------- |
+| Origin                 | OpenShift-specific                 | Kubernetes-native                        |
+| Scope                  | Cluster-wide (applied via roles)   | Namespace-level (via labels)             |
+| Control                | Highly granular                    | Simpler, standards-based                 |
+| Configuration          | Complex YAML, bound via RBAC       | Simple namespace labels                  |
+| Custom Policies        | Fully customizable                 | Only 3 predefined profiles               |
+| Backward Compatibility | Used by OpenShift 4.x              | Introduced in 4.11+, standard for future |
+👉 In future releases, PSA will be default, but SCC will continue for compatibility and advanced use cases.
+
+🧰 Example: PSA Configuration for Different Namespaces
+# Dev namespace - strict
+oc label ns dev \
+pod-security.kubernetes.io/enforce=restricted \
+pod-security.kubernetes.io/enforce-version=latest
+
+# QA namespace - medium
+oc label ns qa \
+pod-security.kubernetes.io/enforce=baseline \
+pod-security.kubernetes.io/enforce-version=latest
+
+# Monitoring namespace - full privileges
+oc label ns monitoring \
+pod-security.kubernetes.io/enforce=privileged \
+pod-security.kubernetes.io/enforce-version=latest
+
+🧩 Admin Control (Bypass)
+Cluster administrators can bypass PSA checks using:
+Admission webhooks
+Cluster roles with special privileges
+SCC (still active in OpenShift for internal components)
+Example: Red Hat’s internal system namespaces (openshift-*) are exempt from PSA checks.
+
+🧩 Viewing PSA Violations (Warnings)
+When you create or update a Pod violating PSA rules, you’ll see:
+Warning: would violate PodSecurity "restricted:latest":
+allowPrivilegeEscalation != false, unrestricted capabilities
+
+These warnings appear in:
+CLI output
+API server audit logs
+Kubernetes events
+
+🧩 In OpenShift Context
+| OpenShift Version | SCC         | PSA                           |
+| ----------------- | ----------- | ----------------------------- |
+| 4.10 and earlier  | ✅ Supported | ❌ Not available               |
+| 4.11 – 4.13       | ✅ Supported | ✅ Available (optional)        |
+| 4.14 and newer    | ✅ Supported | ✅ Default for user namespaces |
+
+🧠 Summary
+| Feature           | Description                               |
+| ----------------- | ----------------------------------------- |
+| **Purpose**       | Enforce Kubernetes Pod Security Standards |
+| **Profiles**      | privileged, baseline, restricted          |
+| **Configuration** | Namespace labels                          |
+| **Actions**       | enforce, warn, audit                      |
+| **Replaces**      | PodSecurityPolicy (PSP)                   |
+| **Coexists With** | SCC in OpenShift 4.x                      |
+| **Benefit**       | Kubernetes-native, simpler to manage      |
+
