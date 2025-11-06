@@ -1,0 +1,157 @@
+🔐 What is SCC in OpenShift?
+SCC (Security Context Constraints) is an OpenShift-specific security feature that defines a set of security rules controlling what pods, service accounts, or users can do and how they run.
+✅ It is OpenShift’s equivalent of PodSecurityPolicies (which existed in Kubernetes but are deprecated).
+SCCs are evaluated before the pod is created — to ensure it complies with cluster security policies.
+
+🧠 Purpose of SCC
+SCCs protect the host and cluster by controlling:
+Privilege escalation
+UID/GID (user/group) used by containers
+HostPath and volume access
+Host networking and ports
+SELinux context
+Capabilities (e.g., SYS_ADMIN, NET_ADMIN)
+
+🧩 1. How SCC Works
+When a pod is created, OpenShift checks which SCCs apply to:
+The user or ServiceAccount that created the pod, and
+The security context requested by the pod.
+If multiple SCCs are available, OpenShift picks the most restrictive one that still allows the pod to run.
+
+🧩 2. View Existing SCCs
+
+List all SCCs in the cluster:
+oc get scc
+
+Example output:
+NAME                   PRIV    CAPS               SELINUX     RUNASUSER
+anyuid                 true    []                 RunAsAny    RunAsAny
+restricted             false   []                 MustRunAs   MustRunAsRange
+privileged             true    []                 RunAsAny    RunAsAny
+nonroot                false   []                 MustRunAs   MustRunAsNonRoot
+hostaccess             true    []                 RunAsAny    RunAsAny
+hostnetwork            true    []                 MustRunAs   MustRunAsRange
+
+🧩 3. Default SCCs (Most Common)
+| SCC Name        | Description                                                                       | Use Case                           |
+| --------------- | --------------------------------------------------------------------------------- | ---------------------------------- |
+| **restricted**  | Default for most workloads. Pods run as non-root and can’t access host resources. | Normal apps                        |
+| **anyuid**      | Allows containers to run with any UID (including root).                           | Legacy or root-based containers    |
+| **privileged**  | Full access to host (root privileges, host networking, etc.)                      | Infrastructure or debugging pods   |
+| **nonroot**     | Must run as non-root user.                                                        | Security-hardened workloads        |
+| **hostnetwork** | Allows use of host network namespace and ports.                                   | Network tools or monitoring agents |
+| **hostaccess**  | Allows host path and network access.                                              | Node-level agents or daemons       |
+
+🧩 4. View SCC Details
+
+Example:
+oc describe scc restricted
+You’ll see:
+Name: restricted
+Priority: <none>
+Allow Privileged: false
+Allow Host Network: false
+Allow Host PID: false
+Run As User Strategy: MustRunAsRange
+SELinux Context: MustRunAs
+Allowed Capabilities: <none>
+Default Add Capabilities: <none>
+Volumes: configMap, emptyDir, secret, persistentVolumeClaim
+
+🧩 5. Assign SCCs to Service Accounts or Users
+SCCs are linked to users, groups, or service accounts.
+You can assign permissions to use a specific SCC.
+
+🔹 Example: Grant anyuid SCC to a ServiceAccount
+oc adm policy add-scc-to-user anyuid -z myapp-sa -n myproject
+-z → refers to a ServiceAccount.
+This allows the pod running with myapp-sa to run as root if needed.
+
+Verify:
+oc get scc anyuid -o yaml | grep myapp-sa
+
+🔹 To remove an SCC from a ServiceAccount
+oc adm policy remove-scc-from-user anyuid -z myapp-sa -n myproject
+
+🔹 To assign SCC to a normal user
+oc adm policy add-scc-to-user privileged user1
+
+🧩 6. SCC Key Fields Explained
+| Field                            | Description                                                    |
+| -------------------------------- | -------------------------------------------------------------- |
+| **allowPrivilegedContainer**     | If `true`, allows privileged containers                        |
+| **allowHostNetwork**             | Allows use of host’s network namespace                         |
+| **allowHostPID/IPC**             | Allows sharing process or IPC namespaces with host             |
+| **runAsUser**                    | Defines allowed UID range (e.g., `MustRunAsNonRoot`)           |
+| **seLinuxContext**               | Controls SELinux label (e.g., `MustRunAs`)                     |
+| **fsGroup / supplementalGroups** | Define allowed GIDs for volumes                                |
+| **volumes**                      | Which volume types are allowed (e.g., `hostPath`, `configMap`) |
+| **allowedCapabilities**          | List of Linux capabilities allowed (e.g., `NET_ADMIN`)         |
+| **defaultAddCapabilities**       | Capabilities automatically added                               |
+| **readOnlyRootFilesystem**       | Forces root filesystem to be read-only                         |
+
+🧩 7. Common Use Cases
+| Scenario                           | SCC Used      | Description                |
+| ---------------------------------- | ------------- | -------------------------- |
+| Normal user application            | `restricted`  | Most secure; default SCC   |
+| Legacy app requiring root          | `anyuid`      | Allows running as UID 0    |
+| Container needing full host access | `privileged`  | Complete host-level access |
+| Monitoring/Networking daemon       | `hostnetwork` | Allows host networking     |
+| Security-hardened workloads        | `nonroot`     | Enforces non-root users    |
+
+🧩 8. Example SCC YAML (Custom SCC)
+You can create custom SCCs for specific security needs.
+
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: custom-nonroot
+allowPrivilegedContainer: false
+allowHostNetwork: false
+runAsUser:
+  type: MustRunAsNonRoot
+seLinuxContext:
+  type: MustRunAs
+fsGroup:
+  type: MustRunAs
+volumes:
+- configMap
+- emptyDir
+- persistentVolumeClaim
+- secret
+
+Apply:
+oc apply -f custom-scc.yaml
+oc adm policy add-scc-to-user custom-nonroot -z myapp-sa -n myproject
+
+🧩 9. SCC Priority
+If multiple SCCs are applicable to a pod, OpenShift chooses the one with highest priority (numerically larger value).
+You can set:
+priority: 10
+in SCC YAML to control this.
+
+🧩 10. Troubleshooting SCC Issues
+| Problem                                     | Cause                              | Solution                                       |
+| ------------------------------------------- | ---------------------------------- | ---------------------------------------------- |
+| Pod fails to start with “permission denied” | SA not allowed to use needed SCC   | `oc adm policy add-scc-to-user anyuid -z <sa>` |
+| Pod cannot access host network              | Restricted SCC applied             | Grant `hostnetwork` SCC                        |
+| App requires root but gets non-root UID     | Default SCC (`restricted`) applied | Use `anyuid` SCC                               |
+| Pod creation denied with "no SCC found"     | SA not bound to any SCC            | Bind appropriate SCC manually                  |
+
+🧩 11. Verify Which SCC is Used by a Pod
+
+Check pod’s events:
+oc describe pod <pod-name>
+Look for:
+SecurityContextConstraints: restricted
+This shows which SCC allowed the pod to run.
+
+🧩 12. Summary Table
+| SCC         | Privileged | RunAsUser        | SELinux   | Volumes           | Typical Use      |
+| ----------- | ---------- | ---------------- | --------- | ----------------- | ---------------- |
+| restricted  | No         | MustRunAsRange   | MustRunAs | safe volumes only | Default apps     |
+| anyuid      | Yes        | RunAsAny         | MustRunAs | all               | Root-based apps  |
+| privileged  | Yes        | RunAsAny         | RunAsAny  | all               | Node-level tools |
+| nonroot     | No         | MustRunAsNonRoot | MustRunAs | safe volumes      | Secure apps      |
+| hostnetwork | Yes        | MustRunAs        | MustRunAs | all               | Network agents   |
+
