@@ -1,0 +1,255 @@
+🧩 What is OpenShift GitOps?
+OpenShift GitOps is Red Hat’s enterprise implementation of Argo CD, a declarative continuous delivery (CD) tool that automates deployment of applications to Kubernetes/OpenShift using Git as the single source of truth.
+It is part of Red Hat’s DevOps ecosystem — usually combined with OpenShift Pipelines (Tekton) for CI.
+
+🔹 Concept Summary
+| Component                        | Role                                                                          |
+| -------------------------------- | ----------------------------------------------------------------------------- |
+| **OpenShift Pipelines (Tekton)** | Handles **Continuous Integration (CI)** — builds, tests, pushes images        |
+| **OpenShift GitOps (Argo CD)**   | Handles **Continuous Delivery (CD)** — deploys manifests from Git to clusters |
+| **Git Repository**               | Central **source of truth** for both app code and Kubernetes manifests        |
+| **Cluster / Namespace**          | Target environment for deployments                                            |
+
+🧠 How GitOps Works in OpenShift
+Developer commits code → triggers Tekton (CI).
+Tekton builds container image and updates manifests (Deployment, YAML, Helm values) in Git.
+Argo CD watches Git repo for changes.
+When a new commit is detected, Argo CD automatically synchronizes the cluster state to match Git.
+The cluster is always guaranteed to match the desired state stored in Git.
+
+⚙️ Why Use OpenShift GitOps
+✅ Declarative + version-controlled deployments
+✅ Automated synchronization between Git and cluster
+✅ Rollback easily using Git history
+✅ Visual dashboard for app status
+✅ Multi-cluster management
+✅ Secure (RBAC, SSO integrated with OpenShift OAuth)
+
+🧱 Core Components
+| Component                  | Description                                                    |
+| -------------------------- | -------------------------------------------------------------- |
+| **Argo CD Application**    | Defines how to sync a Git repository to a namespace/cluster.   |
+| **Repository Credentials** | Stores Git authentication info (SSH/HTTPS).                    |
+| **Project**                | Groups applications with specific access/cluster policies.     |
+| **Sync Policy**            | Controls how/when apps sync (auto or manual).                  |
+| **App of Apps Pattern**    | One Argo app manages multiple sub-apps (common in enterprise). |
+| **Argo CD UI**             | Web console to view, sync, rollback, and monitor apps.         |
+
+🧰 Installation
+1️⃣ Install Operator via CLI:
+oc apply -f https://operatorhub.io/install/openshift-gitops-operator.yaml
+
+2️⃣ From Web Console:
+Navigate to Operators → OperatorHub
+Search for OpenShift GitOps
+Click Install
+It creates Argo CD instance in openshift-gitops namespace
+
+🧩 Default Argo CD Instance
+After installation, the Operator creates:
+A default Argo CD instance
+A route (web URL) like:
+https://argocd-server-openshift-gitops.apps.<cluster-domain>
+You can log in using your OpenShift credentials (OAuth integrated).
+
+🔐 Login to Argo CD via CLI
+oc get route -n openshift-gitops
+
+Example:
+argocd-server   https://argocd-server-openshift-gitops.apps.ocp.example.com
+
+Then login:
+argocd login argocd-server-openshift-gitops.apps.ocp.example.com
+
+Credentials:
+Username: your OpenShift username
+Auth via OAuth or Token
+
+🧱 Argo CD Application YAML
+This is the core resource that defines:
+which Git repo to pull from
+which path to use (manifests, Helm chart, Kustomize)
+which cluster/namespace to deploy to
+
+Example:
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: myapp
+  namespace: openshift-gitops
+spec:
+  project: default
+  source:
+    repoURL: 'https://github.com/rakeshjha/myapp-gitops.git'
+    targetRevision: main
+    path: k8s-manifests
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: myapp-prod
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+
+🔍 Explanation:
+| Field                   | Description                                          |
+| ----------------------- | ---------------------------------------------------- |
+| `repoURL`               | Git repository with manifests                        |
+| `targetRevision`        | Branch or tag                                        |
+| `path`                  | Folder in repo containing YAMLs or Helm chart        |
+| `destination.server`    | API endpoint of target cluster                       |
+| `destination.namespace` | Target namespace                                     |
+| `syncPolicy.automated`  | Enables auto-sync and self-healing                   |
+| `prune`                 | Deletes resources removed from Git                   |
+| `selfHeal`              | Reapplies resources if someone changes them manually |
+| `CreateNamespace=true`  | Automatically creates namespace if missing           |
+
+🧩 CI/CD Integration with Tekton
+Here’s the GitOps + Tekton integration workflow:
+
+🧭 Full CI/CD Flow
+(1) Developer pushes code → GitHub
+        ↓
+(2) OpenShift Pipelines (Tekton)
+    - Clone source
+    - Build image (Buildah/S2I)
+    - Push to image registry (Quay/Docker)
+    - Update image tag in GitOps repo (Kustomize/Helm)
+        ↓
+(3) Git commit triggers Argo CD
+    - Detects Git change
+    - Syncs manifests to cluster
+        ↓
+(4) Deployed App Updated in OpenShift
+
+⚙️ Example Tekton Task to Update GitOps Repo
+
+Task: update-kustomize-image.yaml
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: update-kustomize-image
+spec:
+  params:
+    - name: IMAGE
+      type: string
+    - name: GIT_URL
+      type: string
+    - name: GIT_BRANCH
+      type: string
+  steps:
+    - name: update
+      image: alpine/git
+      script: |
+        git clone -b $(params.GIT_BRANCH) $(params.GIT_URL) repo
+        cd repo/overlays/prod
+        kustomize edit set image myapp=$(params.IMAGE)
+        git config user.name "pipeline-bot"
+        git config user.email "pipeline@ci.local"
+        git commit -am "Update image to $(params.IMAGE)"
+        git push
+
+🔁 Argo CD Detects the Commit and Syncs Automatically
+The moment Tekton commits updated manifests,
+Argo CD automatically deploys the new image to OpenShift.
+
+This forms a complete CI/CD GitOps pipeline.
+
+🧠 Key Argo CD Features in OpenShift
+| Feature                    | Description                                        |
+| -------------------------- | -------------------------------------------------- |
+| **Multi-cluster support**  | Manage multiple clusters from one Argo CD instance |
+| **SSO integration**        | Uses OpenShift OAuth                               |
+| **Self-healing**           | Reverts manual changes to match Git                |
+| **Helm/Kustomize support** | Natively supported templating tools                |
+| **Sync waves and hooks**   | Control order of deployments                       |
+| **App of Apps pattern**    | Manage 100s of apps declaratively                  |
+
+🧮 Example “App of Apps” Pattern
+Parent app manages other apps:
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: apps-root
+  namespace: openshift-gitops
+spec:
+  source:
+    repoURL: 'https://github.com/rakeshjha/gitops-repo.git'
+    targetRevision: main
+    path: apps
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: openshift-gitops
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+
+In /apps, you might have:
+/apps/
+  ├── frontend-app.yaml
+  ├── backend-app.yaml
+  └── database-app.yaml
+Each sub-app deploys separately, but all managed by the root Argo Application.
+
+🧰 Common CLI Commands
+| Command                                     | Description                  |
+| ------------------------------------------- | ---------------------------- |
+| `argocd app list`                           | List applications            |
+| `argocd app get <app-name>`                 | Get app status               |
+| `argocd app sync <app-name>`                | Force sync manually          |
+| `argocd app history <app-name>`             | Show deployment history      |
+| `argocd app rollback <app-name> <revision>` | Rollback to previous version |
+
+📊 Argo CD UI Dashboard
+In OpenShift console → Developer → GitOps → Argo CD Dashboard
+You can:
+View sync status (Synced/OutOfSync)
+Compare Git vs Cluster state
+Sync or Rollback manually
+View resource tree
+Audit deployment history
+
+🔐 Security in GitOps
+Uses OpenShift OAuth for SSO (no separate ArgoCD creds needed)
+RBAC integrated with OpenShift roles
+HTTPS communication via route
+Secrets stored in Kubernetes Secrets
+Access controlled via Projects (ArgoCD projects)
+
+🧠 Best Practices
+✅ Separate Application repos and GitOps repos
+✅ Keep manifests declarative (YAMLs, Helm, Kustomize)
+✅ Use auto-sync with self-heal for production stability
+✅ Use App-of-Apps for multi-team environments
+✅ Restrict write access to GitOps repo (changes only via CI pipeline)
+✅ Use Tekton to build and push images
+✅ Use Argo CD to deploy those images automatically
+
+✅ Summary
+| Component             | Description                               |
+| --------------------- | ----------------------------------------- |
+| **OpenShift GitOps**  | Red Hat’s Argo CD-based CD tool           |
+| **Purpose**           | Declarative deployment automation via Git |
+| **Installed As**      | Operator (namespace: `openshift-gitops`)  |
+| **Integration**       | Works with Tekton (CI) and GitHub/GitLab  |
+| **Deployment Source** | Git repo (Helm/Kustomize/YAMLs)           |
+| **Sync Type**         | Manual or Automated                       |
+| **Self-Heal**         | Yes                                       |
+| **UI & CLI Tools**    | Argo CD Dashboard + CLI                   |
+| **Security**          | OAuth, RBAC, SSL                          |
+
+🔄 End-to-End Flow Summary
+Developer commits code → Git (app repo)
+       ↓
+Tekton CI builds image → Push to Quay
+       ↓
+Tekton updates image tag in GitOps repo
+       ↓
+Argo CD detects change → Syncs to OpenShift cluster
+       ↓
+Application updated automatically (GitOps)
+
