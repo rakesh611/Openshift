@@ -1,0 +1,223 @@
+🧩 What is Image Signing and Policy (ImagePolicyConfig) in OpenShift?
+In OpenShift, Image Signing and ImagePolicyConfig are part of the Image Security subsystem, used to ensure that only trusted container images are allowed to run in the cluster.
+They help administrators control which images can be imported, built, or deployed, based on digital signatures and policy rules.
+
+🚩 Why It Matters
+By default, anyone can pull or use any image from registries like Docker Hub or Quay.
+This introduces risks:
+Malicious or unverified images
+Tampered image content
+Outdated or noncompliant base images
+To prevent that, OpenShift supports:
+Image Signing → ensures authenticity and integrity.
+ImagePolicyConfig → enforces trust and usage policies.
+
+⚙️ Key Components
+| Component                  | Description                                                                           |
+| -------------------------- | ------------------------------------------------------------------------------------- |
+| **Image Signing**          | Digitally signs images using a GPG key to verify integrity and source authenticity.   |
+| **ImagePolicyConfig**      | Cluster-wide configuration that defines policies for image import and usage.          |
+| **Signature Stores**       | Storage for image signatures (often inside OpenShift’s internal registry).            |
+| **Signature Verification** | Process where OpenShift verifies the signature before pulling or deploying the image. |
+
+🧩 1. Image Signing Overview
+When an image is signed, it includes a cryptographic signature created with a private GPG key.
+OpenShift (or Red Hat Quay) stores and verifies this signature with a public key.
+
+🔹 Process Flow
+Build or import image → Example: myregistry.com/app:v1
+Sign the image → Generate a GPG signature file.
+Push signature to registry (or store in OpenShift).
+Configure ImagePolicyConfig → Only allow signed/trusted images.
+OpenShift verifies the image before allowing deployment.
+
+🧩 2. ImagePolicyConfig Overview
+ImagePolicyConfig is part of the master configuration (apiserver level) that defines cluster-wide image policies.
+
+It lives in the file:
+/etc/origin/master/master-config.yaml
+
+or in OCP 4.x:
+/etc/kubernetes/manifests/cluster-image-registry-operator.yaml
+
+This configuration determines:
+Whether image signatures are required.
+Which registries are trusted.
+Whether to allow insecure registries.
+How to handle imported images.
+
+🧱 Example: ImagePolicyConfig Section
+imagePolicyConfig:
+  allowedRegistriesForImport:
+  - domainName: registry.redhat.io
+  - domainName: quay.io
+  - domainName: myregistry.local
+  registrySources:
+    allowedRegistries:
+    - registry.redhat.io
+    - quay.io
+    - myregistry.local
+    blockedRegistries:
+    - docker.io
+  signatureVerification:
+    config:
+      myregistry.local:
+        enabled: true
+        keyFile: /etc/pki/containers/myregistry-pubkey.gpg
+
+Explanation 🔍
+| Field                                 | Description                                                                    |
+| ------------------------------------- | ------------------------------------------------------------------------------ |
+| **allowedRegistriesForImport**        | Only these registries can be used when importing images via `oc import-image`. |
+| **registrySources.allowedRegistries** | Restrict which registries pods can pull images from.                           |
+| **registrySources.blockedRegistries** | Block any image pulled from these sources.                                     |
+| **signatureVerification.enabled**     | Enables signature verification for that registry.                              |
+| **keyFile**                           | Path to public GPG key used to verify the image signature.                     |
+
+🧩 3. Image Signing with GPG (Example Workflow)
+
+Step 1️⃣ – Generate GPG Key Pair
+gpg --gen-key
+Export the public key:
+gpg --export -a "myregistry-signer" > pubkey.gpg
+Export the private key:
+gpg --export-secret-keys -a "myregistry-signer" > privatekey.gpg
+
+Step 2️⃣ – Sign an Image
+Example for Red Hat image signing using atomic tool:
+atomic sign myregistry.local/app:latest
+This creates a signature file stored in:
+/var/lib/atomic/sigstore/myregistry.local/app@sha256:<digest>/signature-1
+
+Step 3️⃣ – Push the Signed Image
+Push both the image and its signature:
+podman push myregistry.local/app:latest
+atomic push --signatures myregistry.local/app:latest
+
+Step 4️⃣ – Configure Public Key in OpenShift Nodes
+Distribute your public key to all nodes or configure it in the ImagePolicyConfig:
+signatureVerification:
+  config:
+    myregistry.local:
+      enabled: true
+      keyFile: /etc/pki/containers/pubkey.gpg
+
+Step 5️⃣ – Enforce Policy
+After restarting API and controller services, OpenShift will block any unsigned image from myregistry.local if verification fails.
+Example rejection:
+Error: image signature for myregistry.local/app:latest not verified
+
+🧩 4. ImagePolicyConfig with Blocking Rules
+
+Block all images except those from trusted registries:
+imagePolicyConfig:
+  registrySources:
+    allowedRegistries:
+    - registry.redhat.io
+    - quay.io/myorg
+    blockedRegistries:
+    - docker.io
+    - gcr.io
+➡️ Now, only images from registry.redhat.io and quay.io/myorg can be used in pods.
+
+If a user tries:
+oc new-app nginx --docker-image=docker.io/nginx
+
+They will get:
+Error from server: image registry docker.io is not allowed by cluster policy
+
+🧩 5. ImagePolicy Admission Plugin
+OpenShift’s Admission Controller checks every Pod creation request.
+When ImagePolicyConfig is enabled:
+It verifies image source.
+It checks digital signature (if required).
+It accepts or rejects pod creation based on the result.
+Admission plugin name:
+openshift.io/ImagePolicy
+
+🧩 6. Example: Enforcing Signed Images Only
+imagePolicyConfig:
+  signatureVerification:
+    config:
+      quay.io/myorg:
+        enabled: true
+        keyFile: /etc/pki/containers/myorg-pubkey.gpg
+  resolveImages: true
+  executionRules:
+  - name: require-signed-images
+    onResources:
+    - resource: pods
+    - resource: builds
+    reject: true
+    matchPolicy: Exact
+    matchSignatures:
+    - keyFile: /etc/pki/containers/myorg-pubkey.gpg
+
+✅ Result:
+Only images signed with the specified key will be allowed to run or be built.
+
+🧩 7. Verifying Image Signatures in OpenShift
+
+To check image signatures:
+oc get image <image-sha> -o json | jq '.image.signatures'
+
+Example output:
+[
+  {
+    "metadata": {
+      "creationTimestamp": "2025-11-06T07:45:00Z"
+    },
+    "type": "atomic",
+    "content": {
+      "signed": {
+        "docker-reference": "myregistry.local/app",
+        "signature": "base64string..."
+      }
+    }
+  }
+]
+
+🧩 8. Using Image Signatures in ImageStreams
+OpenShift ImageStreams store signatures for imported images.
+This helps administrators to:
+Track verified vs unverified images.
+Prevent unsigned images from being promoted to production.
+
+Example:
+oc get is app -o yaml
+
+You’ll see:
+spec:
+  tags:
+  - name: latest
+    importPolicy:
+      scheduled: true
+    referencePolicy:
+      type: Source
+status:
+  tags:
+  - tag: latest
+    items:
+    - image: sha256:abcd1234
+      signatures:
+      - type: atomic
+        content:
+          signed:
+            docker-reference: myregistry.local/app
+
+🧠 Summary Table
+| Feature                        | Description                                              |
+| ------------------------------ | -------------------------------------------------------- |
+| **Image Signing**              | Uses GPG keys to ensure image integrity and authenticity |
+| **Signature Store**            | Stores image signatures in registry or OpenShift         |
+| **ImagePolicyConfig**          | Defines cluster-level image import/use rules             |
+| **allowedRegistriesForImport** | Restricts which registries can import images             |
+| **blockedRegistries**          | Prevents use of certain registries                       |
+| **signatureVerification**      | Enforces image signature validation                      |
+| **Admission Plugin**           | Rejects unsigned or untrusted images automatically       |
+
+🔐 Benefits
+✅ Prevents use of tampered or untrusted images
+✅ Ensures compliance with organization security standards
+✅ Enforces registry and signature-based access
+✅ Provides traceability for images used in builds/deployments
