@@ -1,0 +1,215 @@
+🌐 What is a NetworkPolicy in OpenShift?
+A NetworkPolicy is a Kubernetes resource that defines which network traffic is allowed to or from pods within a namespace.
+By default in OpenShift:
+🔸 All pods can talk to all other pods (within and across namespaces).
+🔸 Once you create a NetworkPolicy, that namespace becomes isolated, and only allowed traffic (as per policy) will flow.
+So, a NetworkPolicy acts like a firewall rule for pods at the cluster network layer.
+
+⚙️ Network Stack in OpenShift
+OpenShift uses OVN-Kubernetes as the default SDN (Software Defined Network) plugin since OCP 4.12+.
+OVN-Kubernetes:
+Implements Kubernetes NetworkPolicy API natively.
+Enforces rules using OVS (Open vSwitch) flow rules.
+Supports both intra-namespace and inter-namespace network isolation.
+
+🧩 Key Concepts
+| Term                   | Description                                          |
+| ---------------------- | ---------------------------------------------------- |
+| **Pod Selector**       | Defines which pods the policy applies to.            |
+| **Ingress**            | Controls **incoming** traffic to selected pods.      |
+| **Egress**             | Controls **outgoing** traffic from selected pods.    |
+| **Namespace Selector** | Selects pods in specific namespaces.                 |
+| **IPBlock**            | Allows or denies traffic to/from external IP ranges. |
+
+🧱 Default Behavior
+| Condition                         | Behavior                                            |
+| --------------------------------- | --------------------------------------------------- |
+| No NetworkPolicy in a namespace   | All traffic allowed                                 |
+| One or more NetworkPolicies exist | Only traffic allowed by those policies is permitted |
+
+In short:
+Adding a policy in a namespace automatically isolates pods in that namespace, unless explicitly allowed.
+
+🧩 NetworkPolicy YAML Structure
+Basic structure:
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: example-policy
+  namespace: myapp
+spec:
+  podSelector:
+    matchLabels:
+      role: frontend        # Select target pods
+  policyTypes:
+  - Ingress                # Type of policy
+  - Egress
+  ingress:
+  - from:                  # Allowed sources
+    - podSelector:
+        matchLabels:
+          role: backend
+    ports:
+    - protocol: TCP
+      port: 80
+  egress:
+  - to:                    # Allowed destinations
+    - ipBlock:
+        cidr: 0.0.0.0/0
+    ports:
+    - protocol: TCP
+      port: 53
+
+🧠 How It Works
+Define podSelector: Which pods this policy applies to.
+Define ingress / egress rules: Who can connect and to whom.
+OVN-Kubernetes enforces these rules by updating OVS flows on nodes.
+
+🔹 Example 1 — Allow traffic only from specific pods
+Allow frontend pods to receive traffic only from backend pods:
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-backend
+  namespace: demo
+spec:
+  podSelector:
+    matchLabels:
+      role: frontend
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          role: backend
+
+➡️ Result: Only pods with label role=backend can talk to role=frontend pods.
+All others are denied.
+
+🔹 Example 2 — Deny all ingress traffic
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all
+  namespace: demo
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+➡️ Result: No pods in this namespace can receive any inbound connections (isolation enforced).
+
+🔹 Example 3 — Allow only egress to DNS and internet
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: demo
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - ipBlock:
+        cidr: 10.0.0.10/32     # internal DNS
+    ports:
+    - protocol: UDP
+      port: 53
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0        # allow internet
+    ports:
+    - protocol: TCP
+      port: 443
+➡️ Result: Pods can reach DNS and the internet via HTTPS, but not other pods or networks.
+
+🔹 Example 4 — Allow traffic between namespaces
+
+Allow traffic from all pods in the monitoring namespace to connect to pods labeled app=db in production namespace.
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-monitoring
+  namespace: production
+spec:
+  podSelector:
+    matchLabels:
+      app: db
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+➡️ Result: Only pods in namespace monitoring can access db pods in production.
+
+🧰 Commands
+
+List policies:
+oc get networkpolicy -n demo
+
+Describe a policy:
+oc describe networkpolicy allow-backend -n demo
+
+Delete a policy:
+oc delete networkpolicy deny-all -n demo
+
+Apply a new policy:
+oc apply -f allow-backend.yaml
+
+🧩 Enforcement by OVN-Kubernetes
+When you create a NetworkPolicy, the OVN controller updates flow rules to:
+Tag pods by namespace and label
+Drop disallowed packets
+Allow permitted ingress/egress based on your YAML definitions
+All enforcement happens at the node level, not inside the pods.
+
+You can verify enforcement using:
+oc exec -it <pod> -- ping <target-pod-ip>
+and observe if it succeeds or fails after applying policies.
+
+⚙️ NetworkPolicy Scopes
+| Policy Type | Controls             | Applies To                     |
+| ----------- | -------------------- | ------------------------------ |
+| **Ingress** | Incoming connections | Pods selected by `podSelector` |
+| **Egress**  | Outgoing connections | Pods selected by `podSelector` |
+If you omit one type, the other remains unrestricted.
+
+🧱 Default NetworkPolicy Templates in OpenShift
+OpenShift provides predefined templates in some namespaces:
+default (no isolation)
+deny-all
+allow-from-same-namespace
+allow-from-openshift-ingress
+allow-from-openshift-monitoring
+
+You can see them using:
+oc get networkpolicy -A
+These help OpenShift components (like routers and metrics) function correctly even with isolation.
+
+🚨 Troubleshooting NetworkPolicies
+| Issue                                 | Cause                                  | Solution                              |
+| ------------------------------------- | -------------------------------------- | ------------------------------------- |
+| Pods can’t talk after applying policy | Namespace became isolated              | Add rules for needed ingress/egress   |
+| Ingress blocked for router            | Missing `allow-from-openshift-ingress` | Apply router-related policy           |
+| DNS resolution failing                | Egress blocked                         | Allow UDP 53 to DNS IP                |
+| Monitoring metrics missing            | Missing allow policy for monitoring    | Add `allow-from-openshift-monitoring` |
+
+🧠 Summary Table
+| Feature                | Description                                           |
+| ---------------------- | ----------------------------------------------------- |
+| **Purpose**            | Control Pod-to-Pod and Pod-to-External network access |
+| **Default**            | All traffic allowed                                   |
+| **When Policy Exists** | Namespace becomes isolated                            |
+| **Managed By**         | OVN-Kubernetes SDN                                    |
+| **Policy Types**       | Ingress, Egress                                       |
+| **Selectors**          | podSelector, namespaceSelector, ipBlock               |
+| **Best Practice**      | Start with `deny-all`, then allow selectively         |
+
